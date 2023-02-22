@@ -273,7 +273,6 @@ class Block_local(nn.Module):
                  act_layer=nn.GELU,
                  norm_layer=nn.LayerNorm, 
                  act='hs+se', 
-                 reduction=4, 
                  wo_dp_conv=False, 
                  dp_first=False):
         super(Block_local, self).__init__()
@@ -285,7 +284,7 @@ class Block_local(nn.Module):
             drop_path_ratio) if drop_path_ratio > 0. else nn.Identity()
         # locality conv
         # The MLP is replaced by the conv layers.
-        self.conv = LocalityFeedForward(dim, dim, 1, mlp_ratio, act, reduction, wo_dp_conv, dp_first)
+        self.conv = LocalityFeedForward(dim, dim, 1, mlp_ratio, act, dim//4, wo_dp_conv, dp_first)
   
     def forward(self, x):
         batch_size, num_token, embed_dim = x.shape                                  # (B, 197, dim)
@@ -792,12 +791,12 @@ class Vit_local_ImageNet(nn.Module):
               nn.Conv2d(in_chans, embed_dim//4, kernel_size=4, stride=4, bias=False),
               norm_layer(embed_dim//4),  # 这里采用BN，也可以采用LN
               nn.GELU(),
-            #   RegionLayer(embed_dim//4, (4,4)), # 56/4 = 14 = 2*7
+              RegionLayer(embed_dim//4, (4,4)), # 56/4 = 14 = 2*7
               nn.Conv2d(embed_dim//4, embed_dim//4,
                         kernel_size=2, stride=2, bias=False),
               norm_layer(embed_dim//4),
               nn.GELU(), 
-            #   RegionLayer(embed_dim//4, (2,2)), # 28/2 = 14 = 2*7
+              RegionLayer(embed_dim//4, (2,2)), # 28/2 = 14 = 2*7
               nn.Conv2d(embed_dim//4, embed_dim,
                         kernel_size=2, stride=2, bias=False),
               norm_layer(embed_dim),

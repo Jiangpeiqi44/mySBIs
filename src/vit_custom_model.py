@@ -284,7 +284,7 @@ class Block_local(nn.Module):
             drop_path_ratio) if drop_path_ratio > 0. else nn.Identity()
         # locality conv
         # The MLP is replaced by the conv layers.
-        self.conv = LocalityFeedForward(dim, dim, 1, mlp_ratio, act, dim//4, wo_dp_conv, dp_first)
+        self.conv = LocalityFeedForward(dim, dim, 1, mlp_ratio, act, dim//16, wo_dp_conv, dp_first) # dim//4
   
     def forward(self, x):
         batch_size, num_token, embed_dim = x.shape                                  # (B, 197, dim)
@@ -306,7 +306,7 @@ class VisionTransformer_local(nn.Module):
                  embed_dim=768, depth=12, num_heads=12, mlp_ratio=4.0, qkv_bias=True,
                  qk_scale=None, representation_size=None, distilled=False, drop_ratio=0.,
                  attn_drop_ratio=0., drop_path_ratio=0., embed_layer=PatchEmbed, norm_layer=None,
-                 act_layer=None, isEmbed=True):
+                 act_layer=None, isEmbed=True, depth_local=6):
 
         super(VisionTransformer_local, self).__init__()
         self.num_classes = num_classes
@@ -329,12 +329,15 @@ class VisionTransformer_local(nn.Module):
 
         # stochastic depth decay rule
         dpr = [x.item() for x in torch.linspace(0, drop_path_ratio, depth)]
-        self.blocks = nn.Sequential(*[
-            Block_local(dim=embed_dim, num_heads=num_heads, mlp_ratio=mlp_ratio, qkv_bias=qkv_bias, qk_scale=qk_scale,
+        self.blocks = nn.Sequential(
+        *(
+            [Block_local(dim=embed_dim, num_heads=num_heads, mlp_ratio=mlp_ratio, qkv_bias=qkv_bias, qk_scale=qk_scale,
                      drop_ratio=drop_ratio, attn_drop_ratio=attn_drop_ratio, drop_path_ratio=dpr[i],
-                     norm_layer=norm_layer, act_layer=act_layer)
-            for i in range(depth)
-        ])
+                     norm_layer=norm_layer, act_layer=act_layer) for i in range(0, depth_local)]
+            + [Block(dim=embed_dim, num_heads=num_heads, mlp_ratio=mlp_ratio, qkv_bias=qkv_bias, qk_scale=qk_scale,
+                     drop_ratio=drop_ratio, attn_drop_ratio=attn_drop_ratio, drop_path_ratio=dpr[i],
+                     norm_layer=norm_layer, act_layer=act_layer) for i in range(depth_local, depth)]
+        ))
         self.norm = norm_layer(embed_dim)
         self.isEmbed = isEmbed
         # Representation layer
@@ -604,7 +607,59 @@ class RegionLayer(nn.Module):
         output = torch.cat(output_row_list, dim=2)
 
         return output
-    
+
+class RegionLayerDW(nn.Module):
+    def __init__(self, in_channels, out_channels, grid=(8, 8)):
+        super(RegionLayerDW, self).__init__()
+
+        self.in_channels = in_channels
+        self.out_channels = out_channels
+        self.grid = grid
+
+        self.region_layers = dict()
+
+        for i in range(self.grid[0]):
+            for j in range(self.grid[1]):
+                module_name = 'region_conv_%d_%d' % (i, j)
+                # # Conv + BN + ReLu
+                self.region_layers[module_name] = nn.Sequential(
+                    nn.Conv2d(in_channels=self.in_channels, out_channels=self.in_channels,
+                              kernel_size=3, stride=1, padding=1, groups=self.in_channels, bias=False),
+                    nn.BatchNorm2d(self.in_channels),
+                    nn.ReLU6(inplace=True),
+                    nn.Conv2d(in_channels=self.in_channels, out_channels=self.out_channels,kernel_size=1, stride=1 ,bias=False),
+                    nn.BatchNorm2d(self.out_channels),
+                )
+                # #
+                self.add_module(name=module_name,
+                                module=self.region_layers[module_name])
+
+    def forward(self, x):
+        batch_size, _, height, width = x.size()
+
+        input_row_list = torch.split(
+            x, split_size_or_sections=height//self.grid[0], dim=2)
+        output_row_list = []
+
+        for i, row in enumerate(input_row_list):
+            input_grid_list_of_a_row = torch.split(
+                row, split_size_or_sections=width//self.grid[1], dim=3)
+            output_grid_list_of_a_row = []
+
+            for j, grid in enumerate(input_grid_list_of_a_row):
+                module_name = 'region_conv_%d_%d' % (i, j)
+                grid = self.region_layers[module_name](
+                    grid.contiguous()) + grid
+                output_grid_list_of_a_row.append(grid)
+
+            output_row = torch.cat(output_grid_list_of_a_row, dim=3)
+            output_row_list.append(output_row)
+
+        output = torch.cat(output_row_list, dim=2)
+
+        return output
+
+
 class hMLP_stem(nn.Module):
     """ Image to Patch Embedding
     """
@@ -759,16 +814,16 @@ class Vit_local(nn.Module):
         self.vit_model = vit_base_patch16_224_in21k_local(
             num_classes=2, has_logits=False, isEmbed=False, keepEmbedWeight=False)
         self.hproj = torch.nn.Sequential(
-            *[RegionLayer(in_chans, (8,8)), # 224/8 = 28 = 4*7
+            *[RegionLayerDW(in_chans, in_chans, (8,8)), # 224/8 = 28 = 4*7
               nn.Conv2d(in_chans, embed_dim//4, kernel_size=4, stride=4, bias=False),
               norm_layer(embed_dim//4),  # 这里采用BN，也可以采用LN
               nn.GELU(),
-              RegionLayer(embed_dim//4, (4,4)), # 56/4 = 14 = 2*7
+              RegionLayerDW(embed_dim//4, embed_dim//4, (4,4)), # 56/4 = 14 = 2*7
               nn.Conv2d(embed_dim//4, embed_dim//4,
                         kernel_size=2, stride=2, bias=False),
               norm_layer(embed_dim//4),
               nn.GELU(), 
-              RegionLayer(embed_dim//4, (2,2)), # 28/2 = 14 = 2*7
+              RegionLayerDW(embed_dim//4, embed_dim//4, (2,2)), # 28/2 = 14 = 2*7
               nn.Conv2d(embed_dim//4, embed_dim,
                         kernel_size=2, stride=2, bias=False),
               norm_layer(embed_dim),
@@ -787,16 +842,16 @@ class Vit_local_ImageNet(nn.Module):
         self.vit_model = vit_base_patch16_224_in21k_local(
             num_classes=1000, has_logits=False, isEmbed=False, keepEmbedWeight=False, drop_ratio=0.1)
         self.hproj = torch.nn.Sequential(
-            *[RegionLayer(in_chans, (8,8)), # 224/8 = 28 = 4*7
+            *[RegionLayerDW(in_chans, in_chans, (8,8)), # 224/8 = 28 = 4*7
               nn.Conv2d(in_chans, embed_dim//4, kernel_size=4, stride=4, bias=False),
               norm_layer(embed_dim//4),  # 这里采用BN，也可以采用LN
               nn.GELU(),
-              RegionLayer(embed_dim//4, (4,4)), # 56/4 = 14 = 2*7
+              RegionLayerDW(embed_dim//4, embed_dim//4, (4,4)), # 56/4 = 14 = 2*7
               nn.Conv2d(embed_dim//4, embed_dim//4,
                         kernel_size=2, stride=2, bias=False),
               norm_layer(embed_dim//4),
               nn.GELU(), 
-              RegionLayer(embed_dim//4, (2,2)), # 28/2 = 14 = 2*7
+              RegionLayerDW(embed_dim//4, embed_dim//4, (2,2)), # 28/2 = 14 = 2*7
               nn.Conv2d(embed_dim//4, embed_dim,
                         kernel_size=2, stride=2, bias=False),
               norm_layer(embed_dim),

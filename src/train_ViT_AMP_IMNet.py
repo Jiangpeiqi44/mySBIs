@@ -16,7 +16,7 @@ from utils.logs import log
 from utils.funcs import load_json
 from datetime import datetime
 from tqdm import tqdm
-from vit_custom_model import Vit_hDRMLP_ImageNet as Net
+from vit_custom_model import Vit_local_ImageNet as Net
 from torch.cuda.amp import autocast as autocast, GradScaler
 import math
 import torchvision.transforms as transforms
@@ -115,24 +115,23 @@ def main(args):
         print(model.load_state_dict(cnn_sd,strict=False))
         print('Load pretrained model...')
  
-        for name, para in model.named_parameters():
-            # 除head, pre_logits外 其他权重全部冻结
-            if "head" not in name and "pre_logits" not in name and 'region_conv' not in name:
-                para.requires_grad_(False)
-            else:
-                print("training {}".format(name))
+        # for name, para in model.named_parameters():
+        #     # 除head, pre_logits外 其他权重全部冻结
+        #     if "head" not in name and "pre_logits" not in name and 'hproj' not in name:
+        #         para.requires_grad_(False)
+        #     else:
+        #         print("training {}".format(name))
 
     for name, para in model.named_parameters():
             # 除head, pre_logits外 其他权重全部冻结
-            if "head" not in name and "pre_logits" not in name and 'region_conv' not in name:
+            if "head" not in name and "pre_logits" not in name and 'hproj' not in name and 'conv' not in name:
                 para.requires_grad_(False)
             else:
                 print("training {}".format(name))
-    
     pg = [p for p in model.parameters() if p.requires_grad]
     # optimizer = torch.optim.SGD(pg, lr=1e-3, momentum=0.9, weight_decay=5E-5)
     optimizer = torch.optim.AdamW(
-        pg, lr=1e-4, betas=(0.9, 0.999), weight_decay=0.01)  # 6e-5  3e-5  2e-5 wd默认1e-2
+        pg, lr=1e-3, betas=(0.9, 0.999), weight_decay=0.3)  # 6e-5  3e-5  2e-5 wd默认1e-2
    
     iter_loss = []
     train_losses = []
@@ -149,7 +148,7 @@ def main(args):
                                            T_max=n_epoch,
                                            eta_min=1.0e-8,
                                            last_epoch=-1,
-                                           warmup_steps=3,
+                                           warmup_steps=2,
                                            warmup_start_lr=1.0e-5)
     last_loss = 99999
     scaler = GradScaler()
@@ -235,7 +234,7 @@ def main(args):
         )
 
         # ## 针对loss最小添加筛选
-        if len(weight_dict_loss) < n_weight_loss and epoch/n_epoch >=0.25:
+        if len(weight_dict_loss) < n_weight_loss:
             save_model_path = os.path.join(
                 save_path+'weights/', "{}_{:.4f}_MINloss.tar".format(epoch+1, val_loss/len(val_loader)))
             weight_dict_loss[save_model_path] = val_loss/len(val_loader)
@@ -247,7 +246,7 @@ def main(args):
             last_val_loss = max([weight_dict_loss[k]
                                 for k in weight_dict_loss])
 
-        elif val_loss/len(val_loader) <= last_val_loss and epoch/n_epoch >= 0.25:
+        elif val_loss/len(val_loader) <= last_val_loss:
             save_model_path = os.path.join(
                 save_path+'weights/', "{}_{:.4f}_MINloss.tar".format(epoch+1, val_loss/len(val_loader)))
             for k in weight_dict_loss:

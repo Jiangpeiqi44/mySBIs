@@ -158,7 +158,7 @@ class Block(nn.Module):
         x = x + self.drop_path(self.attn(self.norm1(x)))
         x = x + self.drop_path(self.mlp(self.norm2(x)))
         return x
-    
+       
 class VisionTransformer_custom(nn.Module):
     def __init__(self, img_size=224, patch_size=16, in_c=3, num_classes=1000,
                  embed_dim=768, depth=12, num_heads=12, mlp_ratio=4.0, qkv_bias=True,
@@ -177,10 +177,6 @@ class VisionTransformer_custom(nn.Module):
         self.patch_embed = embed_layer(
             img_size=img_size, patch_size=patch_size, in_c=in_c, embed_dim=embed_dim)
         num_patches = self.patch_embed.num_patches
-        # 改用hMLP_stem
-        # self.patch_embed_hMLP = hMLP_stem(
-        #     img_size=(224, 224), patch_size=(16, 16), in_chans=3, embed_dim=768)
-        # num_patches = self.patch_embed_hMLP.num_patches
 
         self.cls_token = nn.Parameter(torch.zeros(1, 1, embed_dim))
         self.dist_token = nn.Parameter(torch.zeros(
@@ -263,6 +259,49 @@ class VisionTransformer_custom(nn.Module):
             x = self.head(x)
         return x, patch_token
 
+
+class Block_local(nn.Module):
+    def __init__(self,
+                 dim,
+                 num_heads,
+                 mlp_ratio=4.,
+                 qkv_bias=False,
+                 qk_scale=None,
+                 drop_ratio=0.,
+                 attn_drop_ratio=0.,
+                 drop_path_ratio=0.,
+                 act_layer=nn.GELU,
+                 norm_layer=nn.LayerNorm, 
+                 act='hs+se', 
+                 reduction=4, 
+                 wo_dp_conv=False, 
+                 dp_first=False):
+        super(Block_local, self).__init__()
+        self.norm1 = norm_layer(dim)
+        self.attn = Attention(dim, num_heads=num_heads, qkv_bias=qkv_bias, qk_scale=qk_scale,
+                              attn_drop_ratio=attn_drop_ratio, proj_drop_ratio=drop_ratio)
+        # NOTE: drop path for stochastic depth, we shall see if this is better than dropout here
+        self.drop_path = DropPath(
+            drop_path_ratio) if drop_path_ratio > 0. else nn.Identity()
+        # locality conv
+        # The MLP is replaced by the conv layers.
+        self.conv = LocalityFeedForward(dim, dim, 1, mlp_ratio, act, reduction, wo_dp_conv, dp_first)
+  
+    def forward(self, x):
+        batch_size, num_token, embed_dim = x.shape                                  # (B, 197, dim)
+        patch_size = int(math.sqrt(num_token))
+
+        x = x + self.drop_path(self.attn(self.norm1(x)))                            # (B, 197, dim)
+        # Split the class token and the image token.
+        cls_token, x = torch.split(x, [1, num_token - 1], dim=1)                    # (B, 1, dim), (B, 196, dim)
+        # Reshape and update the image token.
+        x = x.transpose(1, 2).view(batch_size, embed_dim, patch_size, patch_size)   # (B, dim, 14, 14)
+        x = self.conv(x).flatten(2).transpose(1, 2)                                 # (B, 196, dim)
+        # Concatenate the class token and the newly computed image token.
+        x = torch.cat([cls_token, x], dim=1)
+        return x
+
+
 class VisionTransformer_local(nn.Module):
     def __init__(self, img_size=224, patch_size=16, in_c=3, num_classes=1000,
                  embed_dim=768, depth=12, num_heads=12, mlp_ratio=4.0, qkv_bias=True,
@@ -281,10 +320,6 @@ class VisionTransformer_local(nn.Module):
         self.patch_embed = embed_layer(
             img_size=img_size, patch_size=patch_size, in_c=in_c, embed_dim=embed_dim)
         num_patches = self.patch_embed.num_patches
-        # 改用hMLP_stem
-        # self.patch_embed_hMLP = hMLP_stem(
-        #     img_size=(224, 224), patch_size=(16, 16), in_chans=3, embed_dim=768)
-        # num_patches = self.patch_embed_hMLP.num_patches
 
         self.cls_token = nn.Parameter(torch.zeros(1, 1, embed_dim))
         self.dist_token = nn.Parameter(torch.zeros(
@@ -296,9 +331,8 @@ class VisionTransformer_local(nn.Module):
         # stochastic depth decay rule
         dpr = [x.item() for x in torch.linspace(0, drop_path_ratio, depth)]
         self.blocks = nn.Sequential(*[
-            Block(dim=embed_dim, num_heads=num_heads, mlp_ratio=mlp_ratio, qkv_bias=qkv_bias, qk_scale=qk_scale,
-                     drop_ratio=drop_ratio, attn_drop_ratio=attn_drop_ratio, drop_path_ratio=dpr[
-                         i],
+            Block_local(dim=embed_dim, num_heads=num_heads, mlp_ratio=mlp_ratio, qkv_bias=qkv_bias, qk_scale=qk_scale,
+                     drop_ratio=drop_ratio, attn_drop_ratio=attn_drop_ratio, drop_path_ratio=dpr[i],
                      norm_layer=norm_layer, act_layer=act_layer)
             for i in range(depth)
         ])
@@ -431,14 +465,14 @@ def vit_base_patch16_224_in21k_local(num_classes: int = 21843, has_logits: bool 
     weight_pth = 'src/jx_vit_base_patch16_224_in21k-e5005f0a.pth'
     weights_dict = torch.load(weight_pth)
     # # 删除不需要的权重
-    del_keys = ['head.weight', 'head.bias'] if model.has_logits \
-        else ['pre_logits.fc.weight', 'pre_logits.fc.bias', 'head.weight', 'head.bias']
+    del_keys = ['head.weight', 'head.bias'] if model.has_logits else ['pre_logits.fc.weight', 'pre_logits.fc.bias', 'head.weight', 'head.bias']
     for k in del_keys:
         del weights_dict[k]
-    # # # for DEBUG
-    # weight_pth = 'output/3090_pretrained/ViT-4/8_0.9926_val.tar'
-    # weights_dict = torch.load(weight_pth)["model"]
     print(model.load_state_dict(weights_dict, strict=False))
+    
+    # locality_vit_weight_pth = 'src/localvit_t_se4.pth'
+    # locality_vit_weights_dict = torch.load(locality_vit_weight_pth)
+    
     return model
 
 
@@ -723,34 +757,71 @@ class LocalityFeedForward(nn.Module):
 class Vit_local(nn.Module):
     def __init__(self, in_chans=3, embed_dim=768, norm_layer=nn.BatchNorm2d):
         super().__init__()
-        self.vit_model = vit_base_patch16_224_in21k_custom(
+        self.vit_model = vit_base_patch16_224_in21k_local(
             num_classes=2, has_logits=False, isEmbed=False, keepEmbedWeight=False)
-        
+        self.hproj = torch.nn.Sequential(
+            *[RegionLayer(in_chans, (8,8)), # 224/8 = 28 = 4*7
+              nn.Conv2d(in_chans, embed_dim//4, kernel_size=4, stride=4, bias=False),
+              norm_layer(embed_dim//4),  # 这里采用BN，也可以采用LN
+              nn.GELU(),
+              RegionLayer(embed_dim//4, (4,4)), # 56/4 = 14 = 2*7
+              nn.Conv2d(embed_dim//4, embed_dim//4,
+                        kernel_size=2, stride=2, bias=False),
+              norm_layer(embed_dim//4),
+              nn.GELU(), 
+              RegionLayer(embed_dim//4, (2,2)), # 28/2 = 14 = 2*7
+              nn.Conv2d(embed_dim//4, embed_dim,
+                        kernel_size=2, stride=2, bias=False),
+              norm_layer(embed_dim),
+              ])
     def forward(self, x):
         x = self.hproj(x).flatten(2).transpose(1, 2)
         cls_token, patch_token = self.vit_model(x)
-       
+        return cls_token
+
+    def test_time(self, x):
+        return self.forward(x)
+    
+class Vit_local_ImageNet(nn.Module):
+    def __init__(self, in_chans=3, embed_dim=768, norm_layer=nn.BatchNorm2d):
+        super().__init__()
+        self.vit_model = vit_base_patch16_224_in21k_local(
+            num_classes=1000, has_logits=False, isEmbed=False, keepEmbedWeight=False, drop_ratio=0.1)
+        self.hproj = torch.nn.Sequential(
+            *[RegionLayer(in_chans, (8,8)), # 224/8 = 28 = 4*7
+              nn.Conv2d(in_chans, embed_dim//4, kernel_size=4, stride=4, bias=False),
+              norm_layer(embed_dim//4),  # 这里采用BN，也可以采用LN
+              nn.GELU(),
+            #   RegionLayer(embed_dim//4, (4,4)), # 56/4 = 14 = 2*7
+              nn.Conv2d(embed_dim//4, embed_dim//4,
+                        kernel_size=2, stride=2, bias=False),
+              norm_layer(embed_dim//4),
+              nn.GELU(), 
+            #   RegionLayer(embed_dim//4, (2,2)), # 28/2 = 14 = 2*7
+              nn.Conv2d(embed_dim//4, embed_dim,
+                        kernel_size=2, stride=2, bias=False),
+              norm_layer(embed_dim),
+              ])
+    def forward(self, x):
+        x = self.hproj(x).flatten(2).transpose(1, 2)
+        cls_token, patch_token = self.vit_model(x)
         return cls_token
 
     def test_time(self, x):
         return self.forward(x)
 
-
-
-
-
 if __name__ == '__main__':
-    # from torchinfo import summary
-    model = Vit_consis_hDRMLP()
-    # print(model.vit_model.blocks[0])
+    from torchinfo import summary
+    model = Vit_local()
+    # print(model.vit_model.blocks)
     # print(model)
-    image_size = 224
-    batch_size = 2
-    input_s = (batch_size, 3, image_size, image_size)
+    # image_size = 224
+    # batch_size = 2
+    # input_s = (batch_size, 3, image_size, image_size)
     # summary(model, input_s)
-    dummy = torch.rand(batch_size, 3, image_size, image_size)
-    cls_token, consis_map = model(dummy)
-    print(consis_map.shape)
+    # dummy = torch.rand(batch_size, 3, image_size, image_size)
+    # cls_token, consis_map = model(dummy)
+    # print(consis_map.shape)
     '''
     for name, para in model.named_parameters():
         # 除head, pre_logits外 其他权重全部冻结

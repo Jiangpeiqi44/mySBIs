@@ -20,7 +20,7 @@ from utils.funcs import load_json
 from datetime import datetime
 from tqdm import tqdm
 # from my_xcep_vit_model import Vit_consis as Net
-from vit_custom_model import Vit_consis_hDRMLP as Net
+from vit_custom_model import Vit_local as Net
 from torch.cuda.amp import autocast as autocast, GradScaler
 import math
 

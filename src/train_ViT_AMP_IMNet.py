@@ -5,12 +5,12 @@ import torch.nn as nn
 import torch.nn.functional as F
 import numpy as np
 import os
-from PIL import Image
-import sys
+# from PIL import Image
+# import sys
 import random
 import warnings
-from utils.scheduler import LinearDecayLR
-from sklearn.metrics import confusion_matrix, roc_auc_score
+# from utils.scheduler import LinearDecayLR
+# from sklearn.metrics import confusion_matrix, roc_auc_score
 import argparse
 from utils.logs import log
 from utils.funcs import load_json

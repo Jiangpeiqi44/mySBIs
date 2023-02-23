@@ -840,7 +840,7 @@ class Vit_local_ImageNet(nn.Module):
     def __init__(self, in_chans=3, embed_dim=768, norm_layer=nn.BatchNorm2d):
         super().__init__()
         self.vit_model = vit_base_patch16_224_in21k_local(
-            num_classes=1000, has_logits=False, isEmbed=False, keepEmbedWeight=False, drop_ratio=0.1)
+            num_classes=100, has_logits=False, isEmbed=False, keepEmbedWeight=False, drop_path_ratio=0.2) # drop_ratio=0.1
         self.hproj = torch.nn.Sequential(
             *[RegionLayerDW(in_chans, in_chans, (8,8)), # 224/8 = 28 = 4*7
               nn.Conv2d(in_chans, embed_dim//4, kernel_size=4, stride=4, bias=False),

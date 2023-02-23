@@ -284,7 +284,7 @@ class Block_local(nn.Module):
             drop_path_ratio) if drop_path_ratio > 0. else nn.Identity()
         # locality conv
         # The MLP is replaced by the conv layers.
-        self.conv = LocalityFeedForward(dim, dim, 1, mlp_ratio, act, dim//16, wo_dp_conv, dp_first) # dim//4
+        self.conv = LocalityFeedForward(dim, dim, 1, mlp_ratio, act, dim//4, wo_dp_conv, dp_first) # dim//4
   
     def forward(self, x):
         batch_size, num_token, embed_dim = x.shape                                  # (B, 197, dim)
@@ -306,7 +306,7 @@ class VisionTransformer_local(nn.Module):
                  embed_dim=768, depth=12, num_heads=12, mlp_ratio=4.0, qkv_bias=True,
                  qk_scale=None, representation_size=None, distilled=False, drop_ratio=0.,
                  attn_drop_ratio=0., drop_path_ratio=0., embed_layer=PatchEmbed, norm_layer=None,
-                 act_layer=None, isEmbed=True, depth_local=6):
+                 act_layer=None, isEmbed=True, depth_local=4):
 
         super(VisionTransformer_local, self).__init__()
         self.num_classes = num_classes
@@ -814,16 +814,14 @@ class Vit_local(nn.Module):
         self.vit_model = vit_base_patch16_224_in21k_local(
             num_classes=2, has_logits=False, isEmbed=False, keepEmbedWeight=False)
         self.hproj = torch.nn.Sequential(
-            *[RegionLayerDW(in_chans, in_chans, (8,8)), # 224/8 = 28 = 4*7
+            *[RegionLayer(in_chans, (7,7)), 
               nn.Conv2d(in_chans, embed_dim//4, kernel_size=4, stride=4, bias=False),
               norm_layer(embed_dim//4),  # 这里采用BN，也可以采用LN
               nn.GELU(),
-              RegionLayerDW(embed_dim//4, embed_dim//4, (4,4)), # 56/4 = 14 = 2*7
               nn.Conv2d(embed_dim//4, embed_dim//4,
                         kernel_size=2, stride=2, bias=False),
               norm_layer(embed_dim//4),
               nn.GELU(), 
-              RegionLayerDW(embed_dim//4, embed_dim//4, (2,2)), # 28/2 = 14 = 2*7
               nn.Conv2d(embed_dim//4, embed_dim,
                         kernel_size=2, stride=2, bias=False),
               norm_layer(embed_dim),
@@ -842,16 +840,14 @@ class Vit_consis_local(nn.Module):
         self.vit_model = vit_base_patch16_224_in21k_local(
             num_classes=2, has_logits=False, isEmbed=False, keepEmbedWeight=False)
         self.hproj = torch.nn.Sequential(
-            *[RegionLayerDW(in_chans, in_chans, (8,8)), # 224/8 = 28 = 4*7
+            *[RegionLayer(in_chans, (7,7)), 
               nn.Conv2d(in_chans, embed_dim//4, kernel_size=4, stride=4, bias=False),
               norm_layer(embed_dim//4),  # 这里采用BN，也可以采用LN
               nn.GELU(),
-              RegionLayerDW(embed_dim//4, embed_dim//4, (4,4)), # 56/4 = 14 = 2*7
               nn.Conv2d(embed_dim//4, embed_dim//4,
                         kernel_size=2, stride=2, bias=False),
               norm_layer(embed_dim//4),
               nn.GELU(), 
-              RegionLayerDW(embed_dim//4, embed_dim//4, (2,2)), # 28/2 = 14 = 2*7
               nn.Conv2d(embed_dim//4, embed_dim,
                         kernel_size=2, stride=2, bias=False),
               norm_layer(embed_dim),
@@ -882,16 +878,14 @@ class Vit_local_ImageNet(nn.Module):
         self.vit_model = vit_base_patch16_224_in21k_local(
             num_classes=100, has_logits=False, isEmbed=False, keepEmbedWeight=False, drop_path_ratio=0.2) # drop_ratio=0.1
         self.hproj = torch.nn.Sequential(
-            *[RegionLayerDW(in_chans, in_chans, (8,8)), # 224/8 = 28 = 4*7
+            *[RegionLayer(in_chans, (7,7)), 
               nn.Conv2d(in_chans, embed_dim//4, kernel_size=4, stride=4, bias=False),
               norm_layer(embed_dim//4),  # 这里采用BN，也可以采用LN
               nn.GELU(),
-              RegionLayerDW(embed_dim//4, embed_dim//4, (4,4)), # 56/4 = 14 = 2*7
               nn.Conv2d(embed_dim//4, embed_dim//4,
                         kernel_size=2, stride=2, bias=False),
               norm_layer(embed_dim//4),
               nn.GELU(), 
-              RegionLayerDW(embed_dim//4, embed_dim//4, (2,2)), # 28/2 = 14 = 2*7
               nn.Conv2d(embed_dim//4, embed_dim,
                         kernel_size=2, stride=2, bias=False),
               norm_layer(embed_dim),

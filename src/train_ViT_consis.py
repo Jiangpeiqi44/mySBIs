@@ -92,7 +92,7 @@ def main(args):
                                                batch_size=batch_size//2,
                                                shuffle=True,
                                                collate_fn=train_dataset.collate_fn,
-                                               num_workers=14,
+                                               num_workers=15,
                                                pin_memory=True,
                                                drop_last=True,
                                                worker_init_fn=train_dataset.worker_init_fn
@@ -101,7 +101,7 @@ def main(args):
                                              batch_size=batch_size,
                                              shuffle=False,
                                              collate_fn=val_dataset.collate_fn,
-                                             num_workers=14,
+                                             num_workers=15,
                                              pin_memory=True,
                                              worker_init_fn=val_dataset.worker_init_fn
                                              )

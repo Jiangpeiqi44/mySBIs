@@ -19,7 +19,8 @@ from utils.logs import log
 from utils.funcs import load_json
 from datetime import datetime
 from tqdm import tqdm
-from my_xcep_vit_model import Vit_RegionConv
+# from my_xcep_vit_model import Vit_consis as Net
+from vit_custom_model import Vit_consis_hDRMLP as Net
 from torch.cuda.amp import autocast as autocast, GradScaler
 import math
 
@@ -105,35 +106,33 @@ def main(args):
                                              worker_init_fn=val_dataset.worker_init_fn
                                              )
 
-    model = Vit_RegionConv()
+    model = Net()
 
     model = model.to('cuda')
-    
      ## add 载入已训练
     if args.weight_name is not None:
         cnn_sd = torch.load(args.weight_name)["model"]
+        
+        del_keys = ['vit_model.head.weight', 'vit_model.head.bias']
+        for k in del_keys:
+            del cnn_sd[k]
+            
         print(model.load_state_dict(cnn_sd,strict=False))
         print('Load pretrained model...')
  
-        for name, para in model.named_parameters():
-            # 除head, pre_logits外 其他权重全部冻结
-            if "head" not in name and "pre_logits" not in name and 'region_conv' not in name:
-                para.requires_grad_(False)
-            else:
-                print("training {}".format(name))
-
-    for name, para in model.named_parameters():
-            # 除head, pre_logits外 其他权重全部冻结
-            if "head" not in name and "pre_logits" not in name and 'region_conv' not in name:
-                para.requires_grad_(False)
-            else:
-                print("training {}".format(name))
-    
+        # for name, para in model.named_parameters():
+        #     # 除head, pre_logits外 其他权重全部冻结
+        #     if "head" not in name and "pre_logits" not in name and 'region_conv' not in name:
+        #         para.requires_grad_(False)
+        #     else:
+        #         print("training {}".format(name))
+                
     pg = [p for p in model.parameters() if p.requires_grad]
     # optimizer = torch.optim.SGD(pg, lr=1e-3, momentum=0.9, weight_decay=5E-5)
     optimizer = torch.optim.AdamW(
-        pg, lr=1e-4, betas=(0.9, 0.999), weight_decay=0.01)  # 6e-5  3e-5  2e-5 wd默认1e-2
-   
+        pg, lr=1e-4, betas=(0.9, 0.999), weight_decay=0.3)  # 6e-5  3e-5  2e-5 wd默认1e-2
+    # optimizer = torch.optim.AdamW(
+    #     model.parameters(), lr=2e-5, betas=(0.9, 0.999))
     iter_loss = []
     train_losses = []
     test_losses = []
@@ -166,11 +165,11 @@ def main(args):
     last_auc = 0
     last_val_auc = 0
     weight_dict = {}
-    n_weight = 2
+    n_weight = 3
     # 添加针对loss最小的几组pth
     last_val_loss = 0
     weight_dict_loss = {}
-    n_weight_loss = 0
+    n_weight_loss = 1
 
     for epoch in range(n_epoch):
         np.random.seed(seed + epoch)
@@ -181,13 +180,14 @@ def main(args):
             img = data['img'].to(device, non_blocking=True).float()
             target = data['label'].to(device, non_blocking=True).long()
             optimizer.zero_grad()
-            output = model(img)
-            loss = criterion(output, target)
-            loss.backward()
-            optimizer.step()
-            # scaler.scale(loss).backward()
-            # scaler.step(optimizer)
-            # scaler.update()
+            with autocast():
+                output = model(img)
+                loss = criterion(output, target)
+            # loss.backward()
+            # optimizer.step()
+            scaler.scale(loss).backward()
+            scaler.step(optimizer)
+            scaler.update()
             loss_value = loss.item()
             iter_loss.append(loss_value)
             train_loss += loss_value
@@ -215,8 +215,9 @@ def main(args):
             img = data['img'].to(device, non_blocking=True).float()
             target = data['label'].to(device, non_blocking=True).long()
             with torch.no_grad():
-                output = model(img)
-                loss = criterion(output, target)
+                with autocast():
+                    output = model(img)
+                    loss = criterion(output, target)
             loss_value = loss.item()
             iter_loss.append(loss_value)
             val_loss += loss_value
@@ -261,7 +262,7 @@ def main(args):
             last_val_auc = min([weight_dict[k] for k in weight_dict])
 
         # ## 针对loss最小添加筛选
-        if len(weight_dict_loss) < n_weight_loss and epoch/n_epoch >=0.25:
+        if len(weight_dict_loss) < n_weight_loss:
             save_model_path = os.path.join(
                 save_path+'weights/', "{}_{:.4f}_MINloss.tar".format(epoch+1, val_loss/len(val_loader)))
             weight_dict_loss[save_model_path] = val_loss/len(val_loader)
@@ -273,7 +274,7 @@ def main(args):
             last_val_loss = max([weight_dict_loss[k]
                                 for k in weight_dict_loss])
 
-        elif val_loss/len(val_loader) <= last_val_loss and epoch/n_epoch >= 0.25:
+        elif val_loss/len(val_loader) <= last_val_loss:
             save_model_path = os.path.join(
                 save_path+'weights/', "{}_{:.4f}_MINloss.tar".format(epoch+1, val_loss/len(val_loader)))
             for k in weight_dict_loss:

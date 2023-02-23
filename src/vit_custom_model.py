@@ -835,7 +835,47 @@ class Vit_local(nn.Module):
 
     def test_time(self, x):
         return self.forward(x)
-    
+
+class Vit_consis_local(nn.Module):
+    def __init__(self, in_chans=3, embed_dim=768, norm_layer=nn.BatchNorm2d):
+        super().__init__()
+        self.vit_model = vit_base_patch16_224_in21k_local(
+            num_classes=2, has_logits=False, isEmbed=False, keepEmbedWeight=False)
+        self.hproj = torch.nn.Sequential(
+            *[RegionLayerDW(in_chans, in_chans, (8,8)), # 224/8 = 28 = 4*7
+              nn.Conv2d(in_chans, embed_dim//4, kernel_size=4, stride=4, bias=False),
+              norm_layer(embed_dim//4),  # 这里采用BN，也可以采用LN
+              nn.GELU(),
+              RegionLayerDW(embed_dim//4, embed_dim//4, (4,4)), # 56/4 = 14 = 2*7
+              nn.Conv2d(embed_dim//4, embed_dim//4,
+                        kernel_size=2, stride=2, bias=False),
+              norm_layer(embed_dim//4),
+              nn.GELU(), 
+              RegionLayerDW(embed_dim//4, embed_dim//4, (2,2)), # 28/2 = 14 = 2*7
+              nn.Conv2d(embed_dim//4, embed_dim,
+                        kernel_size=2, stride=2, bias=False),
+              norm_layer(embed_dim),
+              ])
+        # consis-1
+        self.K = nn.Linear(768, 768)
+        self.Q = nn.Linear(768, 768)
+        self.scale = 768 ** -0.5
+    def forward(self, x):
+        x = self.hproj(x).flatten(2).transpose(1, 2)
+        cls_token, patch_token = self.vit_model(x)
+        # # consis-1
+        consis_map = (self.K(patch_token) @
+                      self.Q(patch_token).transpose(-2, -1)) * self.scale
+        # # consis-2 add norm
+        # consis_map_norm = torch.norm(patch_token, p=2, dim=2, keepdim=True)
+        # consis_map = 0.5 + 0.5*((self.K(patch_token) @ self.Q(patch_token).transpose(-2, -1)) / (consis_map_norm@consis_map_norm.transpose(-2, -1)))
+        return cls_token, consis_map
+
+    def test_time(self, x):
+        x = self.hproj(x).flatten(2).transpose(1, 2)
+        cls_token, _ = self.vit_model(x)
+        return cls_token
+
 class Vit_local_ImageNet(nn.Module):
     def __init__(self, in_chans=3, embed_dim=768, norm_layer=nn.BatchNorm2d):
         super().__init__()

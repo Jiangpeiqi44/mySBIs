@@ -11,7 +11,7 @@ import warnings
 # from utils.ibi_wavelet import SBI_Dataset
 # from utils.bi_wavelet import SBI_Dataset
 # from utils.sbi_default import SBI_Dataset
-from utils.vit_consis_cut import SBI_Dataset
+from utils.MixBI_Map import SBI_Dataset
 from utils.scheduler import LinearDecayLR
 from sklearn.metrics import confusion_matrix, roc_auc_score
 import argparse
@@ -19,7 +19,7 @@ from utils.logs import log
 from utils.funcs import load_json
 from datetime import datetime
 from tqdm import tqdm
-from my_xcep_vit_model import Vit_consis
+from vit_custom_model import Vit_consis_local as Net
 from torch.cuda.amp import autocast as autocast, GradScaler
 import math
 
@@ -104,19 +104,24 @@ def main(args):
                                              worker_init_fn=val_dataset.worker_init_fn
                                              )
 
-    model = Vit_consis()
+    model = Net()
 
     model = model.to('cuda')
     pg = [p for p in model.parameters() if p.requires_grad]
     # optimizer = torch.optim.SGD(pg, lr=1e-3, momentum=0.9, weight_decay=5E-5)
     optimizer = torch.optim.AdamW(
-        pg, lr=6e-5, betas=(0.9, 0.999), weight_decay=0.1)  # 6e-5  3e-5  2e-5 wd默认1e-2
+        pg, lr=1e-4, betas=(0.9, 0.999), weight_decay=0.3)  # 6e-5  3e-5  2e-5 wd默认1e-2
     # optimizer = torch.optim.AdamW(
     #     model.parameters(), lr=2e-5, betas=(0.9, 0.999))
-    ## add 载入已训练
+     ## add 载入已训练
     if args.weight_name is not None:
         cnn_sd = torch.load(args.weight_name)["model"]
-        model.load_state_dict(cnn_sd)
+        
+        del_keys = ['vit_model.head.weight', 'vit_model.head.bias']
+        for k in del_keys:
+            del cnn_sd[k]
+            
+        print(model.load_state_dict(cnn_sd,strict=False))
         print('Load pretrained model...')
     iter_loss = []
     train_losses = []
@@ -152,11 +157,11 @@ def main(args):
     last_auc = 0
     last_val_auc = 0
     weight_dict = {}
-    n_weight = 5
+    n_weight = 3
     # 添加针对loss最小的几组pth
     last_val_loss = 0
     weight_dict_loss = {}
-    n_weight_loss = 2
+    n_weight_loss = 1
 
     for epoch in range(n_epoch):
         np.random.seed(seed + epoch)

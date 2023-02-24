@@ -104,7 +104,7 @@ def main(args):
                                              pin_memory=True
                                              )
     
-    model = Net('output/ViT-IMN-DP_vit_02_20_00_41_34/weights/35_0.1998_MINloss.tar')
+    model = Net()
 
     model = model.to('cuda')
     
@@ -127,14 +127,14 @@ def main(args):
     ##
     for name, para in model.named_parameters():
         # 除head, pre_logits conv外 其他权重全部冻结
-        if "head" not in name and "pre_logits" not in name  and 'blocks.0.' not in name  and 'blocks.1.' not in name and  'blocks.2.' not in name  and 'blocks.3.' not in name and 'custom_embed' not in name :  
+        if "head" not in name and "pre_logits" not in name and 'custom_embed' not in name :  
             para.requires_grad_(False)
         else:
             print("training {}".format(name))
     pg = [p for p in model.parameters() if p.requires_grad]
     # optimizer = torch.optim.SGD(pg, lr=1e-3, momentum=0.9, weight_decay=5E-5)
     optimizer = torch.optim.AdamW(
-        pg, lr=1e-3, betas=(0.9, 0.999), weight_decay=0.1)  # 6e-5  3e-5  2e-5 wd默认1e-2
+        pg, lr=1e-3, betas=(0.9, 0.999), weight_decay=0.3)  # 6e-5  3e-5  2e-5 wd默认1e-2
    
     iter_loss = []
     train_losses = []

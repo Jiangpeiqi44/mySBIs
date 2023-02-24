@@ -84,7 +84,39 @@ class CustomEmbed(nn.Module):
     def forward(self, x):
         x = self.hproj(x).flatten(2).transpose(1, 2)
         return x
-    
+
+class hDRMLPv2Embed(nn.Module):
+    def __init__(self, img_size=(224, 224), patch_size=(16, 16), in_chans=3, embed_dim=768, norm_layer=nn.BatchNorm2d):
+        super().__init__()
+        num_patches = (img_size[1] // patch_size[1]) * (img_size[0] // patch_size[0])
+        self.img_size = img_size
+        self.patch_size = patch_size
+        self.num_patches = num_patches
+        self.hproj = torch.nn.Sequential(
+            *[
+              nn.Conv2d(in_chans, embed_dim//16, kernel_size=3, stride=1, padding=1, bias=False), # [768,224,224] -> [768//16,224,224]
+              norm_layer(embed_dim//16),  # 这里采用BN，也可以采用LN
+              nn.GELU(),
+              
+              RegionLayerDW(embed_dim//16, embed_dim//16, (7,7)), #[768//16,224,224] -> [768//16,224,224]
+              nn.GELU(),
+              
+              nn.Conv2d(embed_dim//16, embed_dim//4, kernel_size=4, stride=4, bias=False), # [768//16,224,224] -> [768//4,56,56]
+              norm_layer(embed_dim//4),  # 这里采用BN，也可以采用LN
+              nn.GELU(),
+              
+              nn.Conv2d(embed_dim//4, embed_dim//4, kernel_size=2, stride=2, bias=False), # [768//4,56,56] -> [768//4,28,28]
+              norm_layer(embed_dim//4),
+              nn.GELU(),
+              
+              nn.Conv2d(embed_dim//4, embed_dim, kernel_size=2, stride=2, bias=False),  # [768//4,28,28] -> [768,14,14]
+              norm_layer(embed_dim),
+              ])
+        
+    def forward(self, x):
+        x = self.hproj(x).flatten(2).transpose(1, 2)
+        return x
+        
 class hMLP_stem(nn.Module):
     """ Image to Patch Embedding
     """
@@ -246,7 +278,7 @@ class RegionLayerDW(nn.Module):
                     nn.Conv2d(in_channels=self.in_channels, out_channels=self.in_channels,
                               kernel_size=3, stride=1, padding=1, groups=self.in_channels, bias=False),
                     nn.BatchNorm2d(self.in_channels),
-                    nn.ReLU6(inplace=True),
+                    nn.GELU(),
                     nn.Conv2d(in_channels=self.in_channels, out_channels=self.out_channels,kernel_size=1, stride=1 ,bias=False),
                     nn.BatchNorm2d(self.out_channels),
                 )
@@ -770,6 +802,20 @@ def hLDR_embed(weight_pth:str):
         
     return model
     
+def hDRMLPv2_embed(weight_pth:str):
+    model = hDRMLPv2Embed(img_size=(224, 224), patch_size=(16, 16), in_chans=3, embed_dim=768, norm_layer=nn.BatchNorm2d)
+    if weight_pth is not None:
+        weights_dict = torch.load(weight_pth)['model']
+        # # 删除不需要的权重
+        keys = list(weights_dict.keys())
+        for k in keys:
+            if 'hproj' not in k:
+                del weights_dict[k]
+            else:
+                print('Load: ',k)
+        print(model.load_state_dict(weights_dict, strict=False))
+        
+    return model
 
 class Vit_hDRMLP(nn.Module):
     def __init__(self, in_chans=3, embed_dim=768, norm_layer=nn.BatchNorm2d):
@@ -925,8 +971,58 @@ class Vit_local_ImageNet(nn.Module):
     def test_time(self, x):
         return self.forward(x)
 
+class Vit_hDRMLPv2(nn.Module):
+    def __init__(self, weight_pth=None):
+        super().__init__()
+        self.vit_model = vit_base_patch16_224_in21k_custom(
+            num_classes=2, has_logits=False, isEmbed=False, keepEmbedWeight=False)
+        self.custom_embed = hDRMLPv2_embed(weight_pth)
+    def forward(self, x):
+        x = self.custom_embed(x)
+        cls_token, patch_token = self.vit_model(x)
+        return cls_token
+    def test_time(self, x):
+        return self.forward(x)
+    
+class Vit_hDRMLPv2_ImageNet(nn.Module):
+    def __init__(self, weight_pth=None):
+        super().__init__()
+        self.vit_model = vit_base_patch16_224_in21k_custom(
+            num_classes=100, has_logits=False, isEmbed=False, keepEmbedWeight=False, drop_ratio=0.1)
+        self.custom_embed = hDRMLPv2_embed(weight_pth)
+    def forward(self, x):
+        x = self.custom_embed(x)
+        cls_token, patch_token = self.vit_model(x)
+        return cls_token
+    def test_time(self, x):
+        return self.forward(x)
 
+class Vit_consis_hDRMLPv2(nn.Module):
+    def __init__(self, weight_pth=None):
+        super().__init__()
+        self.vit_model = vit_base_patch16_224_in21k_custom(
+            num_classes=2, has_logits=False, isEmbed=False, keepEmbedWeight=False)
+        self.custom_embed = hDRMLPv2_embed(weight_pth)
+        # consis-1
+        self.K = nn.Linear(768, 768)
+        self.Q = nn.Linear(768, 768)
+        self.scale = 768 ** -0.5
+    def forward(self, x):
+        x = self.custom_embed(x)
+        cls_token, patch_token = self.vit_model(x)
+        # # consis-1
+        consis_map = (self.K(patch_token) @
+                      self.Q(patch_token).transpose(-2, -1)) * self.scale
+        # # consis-2 add norm
+        # consis_map_norm = torch.norm(patch_token, p=2, dim=2, keepdim=True)
+        # consis_map = 0.5 + 0.5*((self.K(patch_token) @ self.Q(patch_token).transpose(-2, -1)) / (consis_map_norm@consis_map_norm.transpose(-2, -1)))
+        return cls_token, consis_map
 
+    def test_time(self, x):
+        x = self.custom_embed(x)
+        cls_token, patch_token = self.vit_model(x)
+        return cls_token
+    
 if __name__ == '__main__':
     from torchinfo import summary
     model = Vit_local()

@@ -29,12 +29,10 @@ class DropPath(nn.Module):
     def forward(self, x):
         return drop_path(x, self.drop_prob, self.training)
 
-
 class PatchEmbed(nn.Module):
     """
     2D Image to Patch Embedding
     """
-
     def __init__(self, img_size=224, patch_size=16, in_c=3, embed_dim=768, norm_layer=None):
         super().__init__()
         img_size = (img_size, img_size)
@@ -60,429 +58,14 @@ class PatchEmbed(nn.Module):
         x = self.norm(x)
         return x
 
-
-class Attention(nn.Module):
-    def __init__(self,
-                 dim,   # 输入token的dim
-                 num_heads=8,
-                 qkv_bias=False,
-                 qk_scale=None,
-                 attn_drop_ratio=0.,
-                 proj_drop_ratio=0.):
-        super(Attention, self).__init__()
-        self.num_heads = num_heads
-        head_dim = dim // num_heads
-        self.scale = qk_scale or head_dim ** -0.5
-        self.qkv = nn.Linear(dim, dim * 3, bias=qkv_bias)
-        self.attn_drop = nn.Dropout(attn_drop_ratio)
-        self.proj = nn.Linear(dim, dim)
-        self.proj_drop = nn.Dropout(proj_drop_ratio)
-
-    def forward(self, x):
-        # [batch_size, num_patches + 1, total_embed_dim]
-        B, N, C = x.shape
-
-        # qkv(): -> [batch_size, num_patches + 1, 3 * total_embed_dim]
-        # reshape: -> [batch_size, num_patches + 1, 3, num_heads, embed_dim_per_head]
-        # permute: -> [3, batch_size, num_heads, num_patches + 1, embed_dim_per_head]
-        qkv = self.qkv(x).reshape(B, N, 3, self.num_heads, C //
-                                  self.num_heads).permute(2, 0, 3, 1, 4)
-        # [batch_size, num_heads, num_patches + 1, embed_dim_per_head]
-        # make torchscript happy (cannot use tensor as tuple)
-        q, k, v = qkv[0], qkv[1], qkv[2]
-
-        # transpose: -> [batch_size, num_heads, embed_dim_per_head, num_patches + 1]
-        # @: multiply -> [batch_size, num_heads, num_patches + 1, num_patches + 1]
-        attn = (q @ k.transpose(-2, -1)) * self.scale
-        attn = attn.softmax(dim=-1)
-        # for get local
-        attn_map = attn
-        attn = self.attn_drop(attn_map)
-
-        # @: multiply -> [batch_size, num_heads, num_patches + 1, embed_dim_per_head]
-        # transpose: -> [batch_size, num_patches + 1, num_heads, embed_dim_per_head]
-        # reshape: -> [batch_size, num_patches + 1, total_embed_dim]
-        x = (attn @ v).transpose(1, 2).reshape(B, N, C)
-        x = self.proj(x)
-        x = self.proj_drop(x)
-        return x
-    
-class Mlp(nn.Module):
-    """
-    MLP as used in Vision Transformer, MLP-Mixer and related networks
-    """
-
-    def __init__(self, in_features, hidden_features=None, out_features=None, act_layer=nn.GELU, drop=0.):
+class CustomEmbed(nn.Module):
+    def __init__(self, img_size=(224, 224), patch_size=(16, 16), in_chans=3, embed_dim=768, norm_layer=nn.BatchNorm2d):
         super().__init__()
-        out_features = out_features or in_features
-        hidden_features = hidden_features or in_features
-        self.fc1 = nn.Linear(in_features, hidden_features)
-        self.act = act_layer()
-        self.fc2 = nn.Linear(hidden_features, out_features)
-        self.drop = nn.Dropout(drop)
-
-    def forward(self, x):
-        x = self.fc1(x)
-        x = self.act(x)
-        x = self.drop(x)
-        x = self.fc2(x)
-        x = self.drop(x)
-        return x
-
-
-class Block(nn.Module):
-    def __init__(self,
-                 dim,
-                 num_heads,
-                 mlp_ratio=4.,
-                 qkv_bias=False,
-                 qk_scale=None,
-                 drop_ratio=0.,
-                 attn_drop_ratio=0.,
-                 drop_path_ratio=0.,
-                 act_layer=nn.GELU,
-                 norm_layer=nn.LayerNorm):
-        super(Block, self).__init__()
-        self.norm1 = norm_layer(dim)
-        self.attn = Attention(dim, num_heads=num_heads, qkv_bias=qkv_bias, qk_scale=qk_scale,
-                              attn_drop_ratio=attn_drop_ratio, proj_drop_ratio=drop_ratio)
-        # NOTE: drop path for stochastic depth, we shall see if this is better than dropout here
-        self.drop_path = DropPath(
-            drop_path_ratio) if drop_path_ratio > 0. else nn.Identity()
-        self.norm2 = norm_layer(dim)
-        mlp_hidden_dim = int(dim * mlp_ratio)
-        self.mlp = Mlp(in_features=dim, hidden_features=mlp_hidden_dim,
-                       act_layer=act_layer, drop=drop_ratio)
-
-    def forward(self, x):
-        x = x + self.drop_path(self.attn(self.norm1(x)))
-        x = x + self.drop_path(self.mlp(self.norm2(x)))
-        return x
-       
-class VisionTransformer_custom(nn.Module):
-    def __init__(self, img_size=224, patch_size=16, in_c=3, num_classes=1000,
-                 embed_dim=768, depth=12, num_heads=12, mlp_ratio=4.0, qkv_bias=True,
-                 qk_scale=None, representation_size=None, distilled=False, drop_ratio=0.,
-                 attn_drop_ratio=0., drop_path_ratio=0., embed_layer=PatchEmbed, norm_layer=None,
-                 act_layer=None, isEmbed=True):
-
-        super(VisionTransformer_custom, self).__init__()
-        self.num_classes = num_classes
-        # num_features for consistency with other models
-        self.num_features = self.embed_dim = embed_dim
-        self.num_tokens = 2 if distilled else 1
-        norm_layer = norm_layer or partial(nn.LayerNorm, eps=1e-6)
-        act_layer = act_layer or nn.GELU
-
-        self.patch_embed = embed_layer(
-            img_size=img_size, patch_size=patch_size, in_c=in_c, embed_dim=embed_dim)
-        num_patches = self.patch_embed.num_patches
-
-        self.cls_token = nn.Parameter(torch.zeros(1, 1, embed_dim))
-        self.dist_token = nn.Parameter(torch.zeros(
-            1, 1, embed_dim)) if distilled else None
-        self.pos_embed = nn.Parameter(torch.zeros(
-            1, num_patches + self.num_tokens, embed_dim))
-        self.pos_drop = nn.Dropout(p=drop_ratio)
-
-        # stochastic depth decay rule
-        dpr = [x.item() for x in torch.linspace(0, drop_path_ratio, depth)]
-        self.blocks = nn.Sequential(*[
-            Block(dim=embed_dim, num_heads=num_heads, mlp_ratio=mlp_ratio, qkv_bias=qkv_bias, qk_scale=qk_scale,
-                     drop_ratio=drop_ratio, attn_drop_ratio=attn_drop_ratio, drop_path_ratio=dpr[
-                         i],
-                     norm_layer=norm_layer, act_layer=act_layer)
-            for i in range(depth)
-        ])
-        self.norm = norm_layer(embed_dim)
-        self.isEmbed = isEmbed
-        # Representation layer
-        if representation_size and not distilled:
-            self.has_logits = True
-            self.num_features = representation_size
-            self.pre_logits = nn.Sequential(OrderedDict([
-                ("fc", nn.Linear(embed_dim, representation_size)),
-                ("act", nn.Tanh())
-            ]))
-        else:
-            self.has_logits = False
-            self.pre_logits = nn.Identity()
-
-        # Classifier head(s)
-        self.head = nn.Linear(
-            self.num_features, num_classes) if num_classes > 0 else nn.Identity()
-        self.head_dist = None
-        if distilled:
-            self.head_dist = nn.Linear(
-                self.embed_dim, self.num_classes) if num_classes > 0 else nn.Identity()
-
-        # Weight init
-        nn.init.trunc_normal_(self.pos_embed, std=0.02)
-        if self.dist_token is not None:
-            nn.init.trunc_normal_(self.dist_token, std=0.02)
-
-        nn.init.trunc_normal_(self.cls_token, std=0.02)
-        self.apply(_init_vit_weights)
-
-    def forward_features(self, x):
-        # [B, C, H, W] -> [B, num_patches, embed_dim]
-        if self.isEmbed:
-            x = self.patch_embed(x)  # [B, 196, 768]
-            # x = self.patch_embed_hMLP(x)  # [B, 196, 768]
-        # [1, 1, 768] -> [B, 1, 768]
-        cls_token = self.cls_token.expand(x.shape[0], -1, -1)
-        if self.dist_token is None:
-            x = torch.cat((cls_token, x), dim=1)  # [B, 197, 768]
-        else:
-            x = torch.cat((cls_token, self.dist_token.expand(
-                x.shape[0], -1, -1), x), dim=1)
-
-        x = self.pos_drop(x + self.pos_embed)
-        x = self.blocks(x)
-        x = self.norm(x)
-        if self.dist_token is None:
-            # 还需要返回其它[B,196,768]的特征token
-            return self.pre_logits(x[:, 0]), x[:, 1:]
-        else:
-            return x[:, 0], x[:, 1]
-
-    def forward(self, x):
-        x, patch_token = self.forward_features(x)
-        if self.head_dist is not None:
-            x, x_dist = self.head(x[0]), self.head_dist(x[1])
-            if self.training and not torch.jit.is_scripting():
-                # during inference, return the average of both classifier predictions
-                return x, x_dist
-            else:
-                return (x + x_dist) / 2
-        else:
-            x = self.head(x)
-        return x, patch_token
-
-
-class Block_local(nn.Module):
-    def __init__(self,
-                 dim,
-                 num_heads,
-                 mlp_ratio=4.,
-                 qkv_bias=False,
-                 qk_scale=None,
-                 drop_ratio=0.,
-                 attn_drop_ratio=0.,
-                 drop_path_ratio=0.,
-                 act_layer=nn.GELU,
-                 norm_layer=nn.LayerNorm, 
-                 act='hs+se', 
-                 wo_dp_conv=False, 
-                 dp_first=False):
-        super(Block_local, self).__init__()
-        self.norm1 = norm_layer(dim)
-        self.attn = Attention(dim, num_heads=num_heads, qkv_bias=qkv_bias, qk_scale=qk_scale,
-                              attn_drop_ratio=attn_drop_ratio, proj_drop_ratio=drop_ratio)
-        # NOTE: drop path for stochastic depth, we shall see if this is better than dropout here
-        self.drop_path = DropPath(
-            drop_path_ratio) if drop_path_ratio > 0. else nn.Identity()
-        # locality conv
-        # The MLP is replaced by the conv layers.
-        self.conv = LocalityFeedForward(dim, dim, 1, mlp_ratio, act, dim//16, wo_dp_conv, dp_first) # dim//4
-  
-    def forward(self, x):
-        batch_size, num_token, embed_dim = x.shape                                  # (B, 197, dim)
-        patch_size = int(math.sqrt(num_token))
-
-        x = x + self.drop_path(self.attn(self.norm1(x)))                            # (B, 197, dim)
-        # Split the class token and the image token.
-        cls_token, x = torch.split(x, [1, num_token - 1], dim=1)                    # (B, 1, dim), (B, 196, dim)
-        # Reshape and update the image token.
-        x = x.transpose(1, 2).view(batch_size, embed_dim, patch_size, patch_size)   # (B, dim, 14, 14)
-        x = self.conv(x).flatten(2).transpose(1, 2)                                 # (B, 196, dim)
-        # Concatenate the class token and the newly computed image token.
-        x = torch.cat([cls_token, x], dim=1)
-        return x
-
-
-class VisionTransformer_local(nn.Module):
-    def __init__(self, img_size=224, patch_size=16, in_c=3, num_classes=1000,
-                 embed_dim=768, depth=12, num_heads=12, mlp_ratio=4.0, qkv_bias=True,
-                 qk_scale=None, representation_size=None, distilled=False, drop_ratio=0.,
-                 attn_drop_ratio=0., drop_path_ratio=0., embed_layer=PatchEmbed, norm_layer=None,
-                 act_layer=None, isEmbed=True, depth_local=6):
-
-        super(VisionTransformer_local, self).__init__()
-        self.num_classes = num_classes
-        # num_features for consistency with other models
-        self.num_features = self.embed_dim = embed_dim
-        self.num_tokens = 2 if distilled else 1
-        norm_layer = norm_layer or partial(nn.LayerNorm, eps=1e-6)
-        act_layer = act_layer or nn.GELU
-
-        self.patch_embed = embed_layer(
-            img_size=img_size, patch_size=patch_size, in_c=in_c, embed_dim=embed_dim)
-        num_patches = self.patch_embed.num_patches
-
-        self.cls_token = nn.Parameter(torch.zeros(1, 1, embed_dim))
-        self.dist_token = nn.Parameter(torch.zeros(
-            1, 1, embed_dim)) if distilled else None
-        self.pos_embed = nn.Parameter(torch.zeros(
-            1, num_patches + self.num_tokens, embed_dim))
-        self.pos_drop = nn.Dropout(p=drop_ratio)
-
-        # stochastic depth decay rule
-        dpr = [x.item() for x in torch.linspace(0, drop_path_ratio, depth)]
-        self.blocks = nn.Sequential(
-        *(
-            [Block_local(dim=embed_dim, num_heads=num_heads, mlp_ratio=mlp_ratio, qkv_bias=qkv_bias, qk_scale=qk_scale,
-                     drop_ratio=drop_ratio, attn_drop_ratio=attn_drop_ratio, drop_path_ratio=dpr[i],
-                     norm_layer=norm_layer, act_layer=act_layer) for i in range(0, depth_local)]
-            + [Block(dim=embed_dim, num_heads=num_heads, mlp_ratio=mlp_ratio, qkv_bias=qkv_bias, qk_scale=qk_scale,
-                     drop_ratio=drop_ratio, attn_drop_ratio=attn_drop_ratio, drop_path_ratio=dpr[i],
-                     norm_layer=norm_layer, act_layer=act_layer) for i in range(depth_local, depth)]
-        ))
-        self.norm = norm_layer(embed_dim)
-        self.isEmbed = isEmbed
-        # Representation layer
-        if representation_size and not distilled:
-            self.has_logits = True
-            self.num_features = representation_size
-            self.pre_logits = nn.Sequential(OrderedDict([
-                ("fc", nn.Linear(embed_dim, representation_size)),
-                ("act", nn.Tanh())
-            ]))
-        else:
-            self.has_logits = False
-            self.pre_logits = nn.Identity()
-
-        # Classifier head(s)
-        self.head = nn.Linear(
-            self.num_features, num_classes) if num_classes > 0 else nn.Identity()
-        self.head_dist = None
-        if distilled:
-            self.head_dist = nn.Linear(
-                self.embed_dim, self.num_classes) if num_classes > 0 else nn.Identity()
-
-        # Weight init
-        nn.init.trunc_normal_(self.pos_embed, std=0.02)
-        if self.dist_token is not None:
-            nn.init.trunc_normal_(self.dist_token, std=0.02)
-
-        nn.init.trunc_normal_(self.cls_token, std=0.02)
-        self.apply(_init_vit_weights)
-
-    def forward_features(self, x):
-        # [B, C, H, W] -> [B, num_patches, embed_dim]
-        if self.isEmbed:
-            x = self.patch_embed(x)  # [B, 196, 768]
-            # x = self.patch_embed_hMLP(x)  # [B, 196, 768]
-        # [1, 1, 768] -> [B, 1, 768]
-        cls_token = self.cls_token.expand(x.shape[0], -1, -1)
-        if self.dist_token is None:
-            x = torch.cat((cls_token, x), dim=1)  # [B, 197, 768]
-        else:
-            x = torch.cat((cls_token, self.dist_token.expand(
-                x.shape[0], -1, -1), x), dim=1)
-
-        x = self.pos_drop(x + self.pos_embed)
-        x = self.blocks(x)
-        x = self.norm(x)
-        if self.dist_token is None:
-            # 还需要返回其它[B,196,768]的特征token
-            return self.pre_logits(x[:, 0]), x[:, 1:]
-        else:
-            return x[:, 0], x[:, 1]
-
-    def forward(self, x):
-        x, patch_token = self.forward_features(x)
-        if self.head_dist is not None:
-            x, x_dist = self.head(x[0]), self.head_dist(x[1])
-            if self.training and not torch.jit.is_scripting():
-                # during inference, return the average of both classifier predictions
-                return x, x_dist
-            else:
-                return (x + x_dist) / 2
-        else:
-            x = self.head(x)
-        return x, patch_token
-
-
-
- 
-def _init_vit_weights(m):
-    """
-    ViT weight initialization
-    :param m: module
-    """
-    if isinstance(m, nn.Linear):
-        nn.init.trunc_normal_(m.weight, std=.01)
-        if m.bias is not None:
-            nn.init.zeros_(m.bias)
-    elif isinstance(m, nn.Conv2d):
-        nn.init.kaiming_normal_(m.weight, mode="fan_out")
-        if m.bias is not None:
-            nn.init.zeros_(m.bias)
-    elif isinstance(m, nn.LayerNorm):
-        nn.init.zeros_(m.bias)
-        nn.init.ones_(m.weight)
-        
-def vit_base_patch16_224_in21k_custom(num_classes: int = 21843, has_logits: bool = True, isEmbed: bool = True, drop_ratio: float = 0.,
-                                           attn_drop_ratio: float = 0., drop_path_ratio: float = 0., keepEmbedWeight: bool = True):
-    model = VisionTransformer_custom(img_size=224,
-                                          patch_size=16,
-                                          embed_dim=768,
-                                          depth=12,
-                                          num_heads=12,
-                                          drop_ratio=drop_ratio,
-                                          attn_drop_ratio=attn_drop_ratio,
-                                          drop_path_ratio=drop_path_ratio,
-                                          representation_size=768 if has_logits else None,
-                                          num_classes=num_classes, isEmbed=isEmbed)
-    if not keepEmbedWeight:
-        del model.patch_embed
-    weight_pth = 'src/jx_vit_base_patch16_224_in21k-e5005f0a.pth'
-    weights_dict = torch.load(weight_pth)
-    # # 删除不需要的权重
-    del_keys = ['head.weight', 'head.bias'] if model.has_logits \
-        else ['pre_logits.fc.weight', 'pre_logits.fc.bias', 'head.weight', 'head.bias']
-    for k in del_keys:
-        del weights_dict[k]
-    # # # for DEBUG
-    # weight_pth = 'output/3090_pretrained/ViT-4/8_0.9926_val.tar'
-    # weights_dict = torch.load(weight_pth)["model"]
-    print(model.load_state_dict(weights_dict, strict=False))
-    return model
-
-def vit_base_patch16_224_in21k_local(num_classes: int = 21843, has_logits: bool = True, isEmbed: bool = True, drop_ratio: float = 0.,
-                                           attn_drop_ratio: float = 0., drop_path_ratio: float = 0., keepEmbedWeight: bool = True):
-    model = VisionTransformer_local(img_size=224,
-                                          patch_size=16,
-                                          embed_dim=768,
-                                          depth=12,
-                                          num_heads=12,
-                                          drop_ratio=drop_ratio,
-                                          attn_drop_ratio=attn_drop_ratio,
-                                          drop_path_ratio=drop_path_ratio,
-                                          representation_size=768 if has_logits else None,
-                                          num_classes=num_classes, isEmbed=isEmbed)
-    if not keepEmbedWeight:
-        del model.patch_embed
-    weight_pth = 'src/jx_vit_base_patch16_224_in21k-e5005f0a.pth'
-    weights_dict = torch.load(weight_pth)
-    # # 删除不需要的权重
-    del_keys = ['head.weight', 'head.bias'] if model.has_logits else ['pre_logits.fc.weight', 'pre_logits.fc.bias', 'head.weight', 'head.bias']
-    for k in del_keys:
-        del weights_dict[k]
-    print(model.load_state_dict(weights_dict, strict=False))
-    
-    # locality_vit_weight_pth = 'src/localvit_t_se4.pth'
-    # locality_vit_weights_dict = torch.load(locality_vit_weight_pth)
-    
-    return model
-
-
-class Vit_hDRMLP(nn.Module):
-    def __init__(self, in_chans=3, embed_dim=768, norm_layer=nn.BatchNorm2d):
-        super().__init__()
-        self.vit_model = vit_base_patch16_224_in21k_custom(
-            num_classes=2, has_logits=False, isEmbed=False, keepEmbedWeight=False)
+        num_patches = (img_size[1] // patch_size[1]) * \
+            (img_size[0] // patch_size[0])
+        self.img_size = img_size
+        self.patch_size = patch_size
+        self.num_patches = num_patches
         self.hproj = torch.nn.Sequential(
             *[nn.Conv2d(in_chans, embed_dim//4, kernel_size=4, stride=4, bias=False),
               norm_layer(embed_dim//4),  # 这里采用BN，也可以采用LN
@@ -498,87 +81,93 @@ class Vit_hDRMLP(nn.Module):
               norm_layer(embed_dim),
               ])
         
-
     def forward(self, x):
-        x = self.hproj(x).flatten(2).transpose(1, 2)
-        cls_token, patch_token = self.vit_model(x)
-        return cls_token
-
-    def test_time(self, x):
-        x = self.hproj(x).flatten(2).transpose(1, 2)
-        cls_token, _ = self.vit_model(x)
-        return cls_token
-
-class Vit_consis_hDRMLP(nn.Module):
-    def __init__(self, in_chans=3, embed_dim=768, norm_layer=nn.BatchNorm2d):
-        super().__init__()
-        self.vit_model = vit_base_patch16_224_in21k_custom(
-            num_classes=2, has_logits=False, isEmbed=False, keepEmbedWeight=False)
-        self.hproj = torch.nn.Sequential(
-            *[nn.Conv2d(in_chans, embed_dim//4, kernel_size=4, stride=4, bias=False),
-              norm_layer(embed_dim//4),  # 这里采用BN，也可以采用LN
-              nn.GELU(),
-              RegionLayer(embed_dim//4, (8,8)),
-              nn.Conv2d(embed_dim//4, embed_dim//4,
-                        kernel_size=2, stride=2, bias=False),
-              norm_layer(embed_dim//4),
-              nn.GELU(),
-              RegionLayer(embed_dim//4, (4,4)),
-              nn.Conv2d(embed_dim//4, embed_dim,
-                        kernel_size=2, stride=2, bias=False),
-              norm_layer(embed_dim),
-              ])
-        # consis-1
-        self.K = nn.Linear(768, 768)
-        self.Q = nn.Linear(768, 768)
-        self.scale = 768 ** -0.5
-        # # consis-2
-        # self.K = nn.Identity()
-        # self.Q = nn.Identity()
-
-    def forward(self, x):
-        x = self.hproj(x).flatten(2).transpose(1, 2)
-        cls_token, patch_token = self.vit_model(x)
-        # # consis-1
-        consis_map = (self.K(patch_token) @
-                      self.Q(patch_token).transpose(-2, -1)) * self.scale
-        # # consis-2 add norm
-        # consis_map_norm = torch.norm(patch_token, p=2, dim=2, keepdim=True)
-        # consis_map = 0.5 + 0.5*((self.K(patch_token) @ self.Q(patch_token).transpose(-2, -1)) / (consis_map_norm@consis_map_norm.transpose(-2, -1)))
-        return cls_token, consis_map
-
-    def test_time(self, x):
-        x = self.hproj(x).flatten(2).transpose(1, 2)
-        cls_token, _ = self.vit_model(x)
-        return cls_token
-
-class Vit_hDRMLP_ImageNet(nn.Module):
-    def __init__(self,  in_chans=3, embed_dim=768, norm_layer=nn.BatchNorm2d):
-        super().__init__()
-        self.vit_model = vit_base_patch16_224_in21k_custom(
-            num_classes=100, has_logits=False, isEmbed=False, keepEmbedWeight=False, drop_ratio=0.1) #, drop_path_ratio=0.05
-        self.hproj = torch.nn.Sequential(
-            *[nn.Conv2d(in_chans, embed_dim//4, kernel_size=4, stride=4, bias=False),
-              norm_layer(embed_dim//4),  # 这里采用BN，也可以采用LN
-              nn.GELU(),
-              RegionLayer(embed_dim//4, (8,8)),
-              # nn.Identity(),
-              nn.Conv2d(embed_dim//4, embed_dim//4,
-                        kernel_size=2, stride=2, bias=False),
-              norm_layer(embed_dim//4),
-              nn.GELU(),
-              RegionLayer(embed_dim//4, (4,4)),
-              # nn.Identity(),
-              nn.Conv2d(embed_dim//4, embed_dim,
-                        kernel_size=2, stride=2, bias=False),
-              norm_layer(embed_dim),
-              ])
-       
-    def forward(self, x):
-        x = self.hproj(x).flatten(2).transpose(1, 2)
-        cls_token, _ = self.vit_model(x)
-        return cls_token
+        x = self.proj(x).flatten(2).transpose(1, 2)
+        return x
     
+class hMLP_stem(nn.Module):
+    """ Image to Patch Embedding
+    """
+
+    def __init__(self, img_size=(224, 224), patch_size=(16, 16), in_chans=3, embed_dim=768, norm_layer=nn.BatchNorm2d):
+        super().__init__()
+        num_patches = (img_size[1] // patch_size[1]) * \
+            (img_size[0] // patch_size[0])
+        self.img_size = img_size
+        self.patch_size = patch_size
+        self.num_patches = num_patches
+        self.proj = torch.nn.Sequential(
+            *[nn.Conv2d(in_chans, embed_dim//4, kernel_size=4, stride=4, bias=False),
+              norm_layer(embed_dim//4),  # 这里采用BN，也可以采用LN
+              nn.GELU(),
+              nn.Conv2d(embed_dim//4, embed_dim//4,
+                        kernel_size=2, stride=2, bias=False),
+              norm_layer(embed_dim//4),
+              nn.GELU(),
+              nn.Conv2d(embed_dim//4, embed_dim,
+                        kernel_size=2, stride=2, bias=False),
+              norm_layer(embed_dim),
+              ])
+
+    def forward(self, x):
+        # flatten: [B, C, H, W] -> [B, C, HW]
+        # transpose: [B, C, HW] -> [B, HW, C]
+        x = self.proj(x).flatten(2).transpose(1, 2)
+        return x
+
+class h_sigmoid(nn.Module):
+    def __init__(self, inplace=True):
+        super(h_sigmoid, self).__init__()
+        self.relu = nn.ReLU6(inplace=inplace)
+
+    def forward(self, x):
+        return self.relu(x + 3) / 6
+
+class h_swish(nn.Module):
+    def __init__(self, inplace=True):
+        super(h_swish, self).__init__()
+        self.sigmoid = h_sigmoid(inplace=inplace)
+
+    def forward(self, x):
+        return x * self.sigmoid(x)
+
+class ECALayer(nn.Module):
+    def __init__(self, channel, gamma=2, b=1, sigmoid=True):
+        super(ECALayer, self).__init__()
+        t = int(abs((math.log(channel, 2) + b) / gamma))
+        k = t if t % 2 else t + 1
+
+        self.avg_pool = nn.AdaptiveAvgPool2d(1)
+        self.conv = nn.Conv1d(1, 1, kernel_size=k, padding=k // 2, bias=False)
+        if sigmoid:
+            self.sigmoid = nn.Sigmoid()
+        else:
+            self.sigmoid = h_sigmoid()
+
+    def forward(self, x):
+        y = self.avg_pool(x)
+        y = self.conv(y.squeeze(-1).transpose(-1, -2))
+        y = y.transpose(-1, -2).unsqueeze(-1)
+        y = self.sigmoid(y)
+        return x * y.expand_as(x)
+
+class SELayer(nn.Module):
+    def __init__(self, channel, reduction=4):
+        super(SELayer, self).__init__()
+        self.avg_pool = nn.AdaptiveAvgPool2d(1)
+        self.fc = nn.Sequential(
+                nn.Linear(channel, channel // reduction),
+                nn.ReLU(inplace=True),
+                nn.Linear(channel // reduction, channel),
+                h_sigmoid()
+        )
+
+    def forward(self, x):
+        b, c, _, _ = x.size()
+        y = self.avg_pool(x).view(b, c)
+        y = self.fc(y).view(b, c, 1, 1)
+        return x * y
+
 class RegionLayer(nn.Module):
     def __init__(self, in_channels, grid=(8, 8)):
         super(RegionLayer, self).__init__()
@@ -690,94 +279,6 @@ class RegionLayerDW(nn.Module):
 
         return output
 
-
-class hMLP_stem(nn.Module):
-    """ Image to Patch Embedding
-    """
-
-    def __init__(self, img_size=(224, 224), patch_size=(16, 16), in_chans=3, embed_dim=768, norm_layer=nn.BatchNorm2d):
-        super().__init__()
-        num_patches = (img_size[1] // patch_size[1]) * \
-            (img_size[0] // patch_size[0])
-        self.img_size = img_size
-        self.patch_size = patch_size
-        self.num_patches = num_patches
-        self.proj = torch.nn.Sequential(
-            *[nn.Conv2d(in_chans, embed_dim//4, kernel_size=4, stride=4, bias=False),
-              norm_layer(embed_dim//4),  # 这里采用BN，也可以采用LN
-              nn.GELU(),
-              nn.Conv2d(embed_dim//4, embed_dim//4,
-                        kernel_size=2, stride=2, bias=False),
-              norm_layer(embed_dim//4),
-              nn.GELU(),
-              nn.Conv2d(embed_dim//4, embed_dim,
-                        kernel_size=2, stride=2, bias=False),
-              norm_layer(embed_dim),
-              ])
-
-    def forward(self, x):
-        # flatten: [B, C, H, W] -> [B, C, HW]
-        # transpose: [B, C, HW] -> [B, HW, C]
-        x = self.proj(x).flatten(2).transpose(1, 2)
-        return x
-
-
-class h_sigmoid(nn.Module):
-    def __init__(self, inplace=True):
-        super(h_sigmoid, self).__init__()
-        self.relu = nn.ReLU6(inplace=inplace)
-
-    def forward(self, x):
-        return self.relu(x + 3) / 6
-
-
-class h_swish(nn.Module):
-    def __init__(self, inplace=True):
-        super(h_swish, self).__init__()
-        self.sigmoid = h_sigmoid(inplace=inplace)
-
-    def forward(self, x):
-        return x * self.sigmoid(x)
-
-
-class ECALayer(nn.Module):
-    def __init__(self, channel, gamma=2, b=1, sigmoid=True):
-        super(ECALayer, self).__init__()
-        t = int(abs((math.log(channel, 2) + b) / gamma))
-        k = t if t % 2 else t + 1
-
-        self.avg_pool = nn.AdaptiveAvgPool2d(1)
-        self.conv = nn.Conv1d(1, 1, kernel_size=k, padding=k // 2, bias=False)
-        if sigmoid:
-            self.sigmoid = nn.Sigmoid()
-        else:
-            self.sigmoid = h_sigmoid()
-
-    def forward(self, x):
-        y = self.avg_pool(x)
-        y = self.conv(y.squeeze(-1).transpose(-1, -2))
-        y = y.transpose(-1, -2).unsqueeze(-1)
-        y = self.sigmoid(y)
-        return x * y.expand_as(x)
-
-
-class SELayer(nn.Module):
-    def __init__(self, channel, reduction=4):
-        super(SELayer, self).__init__()
-        self.avg_pool = nn.AdaptiveAvgPool2d(1)
-        self.fc = nn.Sequential(
-                nn.Linear(channel, channel // reduction),
-                nn.ReLU(inplace=True),
-                nn.Linear(channel // reduction, channel),
-                h_sigmoid()
-        )
-
-    def forward(self, x):
-        b, c, _, _ = x.size()
-        y = self.avg_pool(x).view(b, c)
-        y = self.fc(y).view(b, c, 1, 1)
-        return x * y
-
 class LocalityFeedForward(nn.Module):
     def __init__(self, in_dim, out_dim, stride, expand_ratio=4., act='hs+se', reduction=4,
                  wo_dp_conv=False, dp_first=False):
@@ -839,50 +340,476 @@ class LocalityFeedForward(nn.Module):
         x = x + self.conv(x)
         return x
 
-class Vit_local(nn.Module):
+class Attention(nn.Module):
+    def __init__(self,
+                 dim,   # 输入token的dim
+                 num_heads=8,
+                 qkv_bias=False,
+                 qk_scale=None,
+                 attn_drop_ratio=0.,
+                 proj_drop_ratio=0.):
+        super(Attention, self).__init__()
+        self.num_heads = num_heads
+        head_dim = dim // num_heads
+        self.scale = qk_scale or head_dim ** -0.5
+        self.qkv = nn.Linear(dim, dim * 3, bias=qkv_bias)
+        self.attn_drop = nn.Dropout(attn_drop_ratio)
+        self.proj = nn.Linear(dim, dim)
+        self.proj_drop = nn.Dropout(proj_drop_ratio)
+
+    def forward(self, x):
+        # [batch_size, num_patches + 1, total_embed_dim]
+        B, N, C = x.shape
+
+        # qkv(): -> [batch_size, num_patches + 1, 3 * total_embed_dim]
+        # reshape: -> [batch_size, num_patches + 1, 3, num_heads, embed_dim_per_head]
+        # permute: -> [3, batch_size, num_heads, num_patches + 1, embed_dim_per_head]
+        qkv = self.qkv(x).reshape(B, N, 3, self.num_heads, C //
+                                  self.num_heads).permute(2, 0, 3, 1, 4)
+        # [batch_size, num_heads, num_patches + 1, embed_dim_per_head]
+        # make torchscript happy (cannot use tensor as tuple)
+        q, k, v = qkv[0], qkv[1], qkv[2]
+
+        # transpose: -> [batch_size, num_heads, embed_dim_per_head, num_patches + 1]
+        # @: multiply -> [batch_size, num_heads, num_patches + 1, num_patches + 1]
+        attn = (q @ k.transpose(-2, -1)) * self.scale
+        attn = attn.softmax(dim=-1)
+        # for get local
+        attn_map = attn
+        attn = self.attn_drop(attn_map)
+
+        # @: multiply -> [batch_size, num_heads, num_patches + 1, embed_dim_per_head]
+        # transpose: -> [batch_size, num_patches + 1, num_heads, embed_dim_per_head]
+        # reshape: -> [batch_size, num_patches + 1, total_embed_dim]
+        x = (attn @ v).transpose(1, 2).reshape(B, N, C)
+        x = self.proj(x)
+        x = self.proj_drop(x)
+        return x
+    
+class Mlp(nn.Module):
+    """
+    MLP as used in Vision Transformer, MLP-Mixer and related networks
+    """
+
+    def __init__(self, in_features, hidden_features=None, out_features=None, act_layer=nn.GELU, drop=0.):
+        super().__init__()
+        out_features = out_features or in_features
+        hidden_features = hidden_features or in_features
+        self.fc1 = nn.Linear(in_features, hidden_features)
+        self.act = act_layer()
+        self.fc2 = nn.Linear(hidden_features, out_features)
+        self.drop = nn.Dropout(drop)
+
+    def forward(self, x):
+        x = self.fc1(x)
+        x = self.act(x)
+        x = self.drop(x)
+        x = self.fc2(x)
+        x = self.drop(x)
+        return x
+
+class Block(nn.Module):
+    def __init__(self,
+                 dim,
+                 num_heads,
+                 mlp_ratio=4.,
+                 qkv_bias=False,
+                 qk_scale=None,
+                 drop_ratio=0.,
+                 attn_drop_ratio=0.,
+                 drop_path_ratio=0.,
+                 act_layer=nn.GELU,
+                 norm_layer=nn.LayerNorm):
+        super(Block, self).__init__()
+        self.norm1 = norm_layer(dim)
+        self.attn = Attention(dim, num_heads=num_heads, qkv_bias=qkv_bias, qk_scale=qk_scale,
+                              attn_drop_ratio=attn_drop_ratio, proj_drop_ratio=drop_ratio)
+        # NOTE: drop path for stochastic depth, we shall see if this is better than dropout here
+        self.drop_path = DropPath(
+            drop_path_ratio) if drop_path_ratio > 0. else nn.Identity()
+        self.norm2 = norm_layer(dim)
+        mlp_hidden_dim = int(dim * mlp_ratio)
+        self.mlp = Mlp(in_features=dim, hidden_features=mlp_hidden_dim,
+                       act_layer=act_layer, drop=drop_ratio)
+
+    def forward(self, x):
+        x = x + self.drop_path(self.attn(self.norm1(x)))
+        x = x + self.drop_path(self.mlp(self.norm2(x)))
+        return x
+
+class Block_local(nn.Module):
+    def __init__(self,
+                 dim,
+                 num_heads,
+                 mlp_ratio=4.,
+                 qkv_bias=False,
+                 qk_scale=None,
+                 drop_ratio=0.,
+                 attn_drop_ratio=0.,
+                 drop_path_ratio=0.,
+                 norm_layer=nn.LayerNorm, 
+                 act='hs', 
+                 wo_dp_conv=False, 
+                 dp_first=False):
+        super(Block_local, self).__init__()
+        self.norm1 = norm_layer(dim)
+        self.attn = Attention(dim, num_heads=num_heads, qkv_bias=qkv_bias, qk_scale=qk_scale,
+                              attn_drop_ratio=attn_drop_ratio, proj_drop_ratio=drop_ratio)
+        # NOTE: drop path for stochastic depth, we shall see if this is better than dropout here
+        self.drop_path = DropPath(
+            drop_path_ratio) if drop_path_ratio > 0. else nn.Identity()
+        # locality conv
+        # The MLP is replaced by the conv layers.
+        self.conv = LocalityFeedForward(dim, dim, 1, mlp_ratio, act, dim//4, wo_dp_conv, dp_first) # dim//4
+  
+    def forward(self, x):
+        batch_size, num_token, embed_dim = x.shape                                  # (B, 197, dim)
+        patch_size = int(math.sqrt(num_token))
+
+        x = x + self.drop_path(self.attn(self.norm1(x)))                            # (B, 197, dim)
+        # Split the class token and the image token.
+        cls_token, x = torch.split(x, [1, num_token - 1], dim=1)                    # (B, 1, dim), (B, 196, dim)
+        # Reshape and update the image token.
+        x = x.transpose(1, 2).view(batch_size, embed_dim, patch_size, patch_size)   # (B, dim, 14, 14)
+        x = self.conv(x).flatten(2).transpose(1, 2)                                 # (B, 196, dim)
+        # Concatenate the class token and the newly computed image token.
+        x = torch.cat([cls_token, x], dim=1)
+        return x
+
+class VisionTransformer_custom(nn.Module):
+    def __init__(self, img_size=224, patch_size=16, in_c=3, num_classes=1000,
+                 embed_dim=768, depth=12, num_heads=12, mlp_ratio=4.0, qkv_bias=True,
+                 qk_scale=None, representation_size=None, distilled=False, drop_ratio=0.,
+                 attn_drop_ratio=0., drop_path_ratio=0., embed_layer=PatchEmbed, norm_layer=None,
+                 act_layer=None, isEmbed=True):
+
+        super(VisionTransformer_custom, self).__init__()
+        self.num_classes = num_classes
+        # num_features for consistency with other models
+        self.num_features = self.embed_dim = embed_dim
+        self.num_tokens = 2 if distilled else 1
+        norm_layer = norm_layer or partial(nn.LayerNorm, eps=1e-6)
+        act_layer = act_layer or nn.GELU
+
+        self.patch_embed = embed_layer(
+            img_size=img_size, patch_size=patch_size, in_c=in_c, embed_dim=embed_dim)
+        num_patches = self.patch_embed.num_patches
+
+        self.cls_token = nn.Parameter(torch.zeros(1, 1, embed_dim))
+        self.dist_token = nn.Parameter(torch.zeros(
+            1, 1, embed_dim)) if distilled else None
+        self.pos_embed = nn.Parameter(torch.zeros(
+            1, num_patches + self.num_tokens, embed_dim))
+        self.pos_drop = nn.Dropout(p=drop_ratio)
+
+        # stochastic depth decay rule
+        dpr = [x.item() for x in torch.linspace(0, drop_path_ratio, depth)]
+        self.blocks = nn.Sequential(*[
+            Block(dim=embed_dim, num_heads=num_heads, mlp_ratio=mlp_ratio, qkv_bias=qkv_bias, qk_scale=qk_scale,
+                     drop_ratio=drop_ratio, attn_drop_ratio=attn_drop_ratio, drop_path_ratio=dpr[
+                         i],
+                     norm_layer=norm_layer, act_layer=act_layer)
+            for i in range(depth)
+        ])
+        self.norm = norm_layer(embed_dim)
+        self.isEmbed = isEmbed
+        # Representation layer
+        if representation_size and not distilled:
+            self.has_logits = True
+            self.num_features = representation_size
+            self.pre_logits = nn.Sequential(OrderedDict([
+                ("fc", nn.Linear(embed_dim, representation_size)),
+                ("act", nn.Tanh())
+            ]))
+        else:
+            self.has_logits = False
+            self.pre_logits = nn.Identity()
+
+        # Classifier head(s)
+        self.head = nn.Linear(
+            self.num_features, num_classes) if num_classes > 0 else nn.Identity()
+        self.head_dist = None
+        if distilled:
+            self.head_dist = nn.Linear(
+                self.embed_dim, self.num_classes) if num_classes > 0 else nn.Identity()
+
+        # Weight init
+        nn.init.trunc_normal_(self.pos_embed, std=0.02)
+        if self.dist_token is not None:
+            nn.init.trunc_normal_(self.dist_token, std=0.02)
+
+        nn.init.trunc_normal_(self.cls_token, std=0.02)
+        self.apply(_init_vit_weights)
+
+    def forward_features(self, x):
+        # [B, C, H, W] -> [B, num_patches, embed_dim]
+        if self.isEmbed:
+            x = self.patch_embed(x)  # [B, 196, 768]
+            # x = self.patch_embed_hMLP(x)  # [B, 196, 768]
+        # [1, 1, 768] -> [B, 1, 768]
+        cls_token = self.cls_token.expand(x.shape[0], -1, -1)
+        if self.dist_token is None:
+            x = torch.cat((cls_token, x), dim=1)  # [B, 197, 768]
+        else:
+            x = torch.cat((cls_token, self.dist_token.expand(
+                x.shape[0], -1, -1), x), dim=1)
+
+        x = self.pos_drop(x + self.pos_embed)
+        x = self.blocks(x)
+        x = self.norm(x)
+        if self.dist_token is None:
+            # 还需要返回其它[B,196,768]的特征token
+            return self.pre_logits(x[:, 0]), x[:, 1:]
+        else:
+            return x[:, 0], x[:, 1]
+
+    def forward(self, x):
+        x, patch_token = self.forward_features(x)
+        if self.head_dist is not None:
+            x, x_dist = self.head(x[0]), self.head_dist(x[1])
+            if self.training and not torch.jit.is_scripting():
+                # during inference, return the average of both classifier predictions
+                return x, x_dist
+            else:
+                return (x + x_dist) / 2
+        else:
+            x = self.head(x)
+        return x, patch_token
+
+class VisionTransformer_local(nn.Module):
+    def __init__(self, img_size=224, patch_size=16, in_c=3, num_classes=1000,
+                 embed_dim=768, depth=12, num_heads=12, mlp_ratio=4.0, qkv_bias=True,
+                 qk_scale=None, representation_size=None, distilled=False, drop_ratio=0.,
+                 attn_drop_ratio=0., drop_path_ratio=0., embed_layer=PatchEmbed, norm_layer=None,
+                 act_layer=None, isEmbed=True, depth_local=3):
+
+        super(VisionTransformer_local, self).__init__()
+        self.num_classes = num_classes
+        # num_features for consistency with other models
+        self.num_features = self.embed_dim = embed_dim
+        self.num_tokens = 2 if distilled else 1
+        norm_layer = norm_layer or partial(nn.LayerNorm, eps=1e-6)
+        act_layer = act_layer or nn.GELU
+
+        self.patch_embed = embed_layer(
+            img_size=img_size, patch_size=patch_size, in_c=in_c, embed_dim=embed_dim)
+        num_patches = self.patch_embed.num_patches
+
+        self.cls_token = nn.Parameter(torch.zeros(1, 1, embed_dim))
+        self.dist_token = nn.Parameter(torch.zeros(
+            1, 1, embed_dim)) if distilled else None
+        self.pos_embed = nn.Parameter(torch.zeros(
+            1, num_patches + self.num_tokens, embed_dim))
+        self.pos_drop = nn.Dropout(p=drop_ratio)
+
+        # stochastic depth decay rule
+        dpr = [x.item() for x in torch.linspace(0, drop_path_ratio, depth)]
+        self.blocks = nn.Sequential(
+        *(
+            [Block_local(dim=embed_dim, num_heads=num_heads, mlp_ratio=mlp_ratio, qkv_bias=qkv_bias, qk_scale=qk_scale,
+                     drop_ratio=drop_ratio, attn_drop_ratio=attn_drop_ratio, drop_path_ratio=dpr[i],
+                     norm_layer=norm_layer, act_layer=act_layer) for i in range(0, depth_local)]
+            + [Block(dim=embed_dim, num_heads=num_heads, mlp_ratio=mlp_ratio, qkv_bias=qkv_bias, qk_scale=qk_scale,
+                     drop_ratio=drop_ratio, attn_drop_ratio=attn_drop_ratio, drop_path_ratio=dpr[i],
+                     norm_layer=norm_layer, act_layer=act_layer) for i in range(depth_local, depth)]
+        ))
+        self.norm = norm_layer(embed_dim)
+        self.isEmbed = isEmbed
+        # Representation layer
+        if representation_size and not distilled:
+            self.has_logits = True
+            self.num_features = representation_size
+            self.pre_logits = nn.Sequential(OrderedDict([
+                ("fc", nn.Linear(embed_dim, representation_size)),
+                ("act", nn.Tanh())
+            ]))
+        else:
+            self.has_logits = False
+            self.pre_logits = nn.Identity()
+
+        # Classifier head(s)
+        self.head = nn.Linear(
+            self.num_features, num_classes) if num_classes > 0 else nn.Identity()
+        self.head_dist = None
+        if distilled:
+            self.head_dist = nn.Linear(
+                self.embed_dim, self.num_classes) if num_classes > 0 else nn.Identity()
+
+        # Weight init
+        nn.init.trunc_normal_(self.pos_embed, std=0.02)
+        if self.dist_token is not None:
+            nn.init.trunc_normal_(self.dist_token, std=0.02)
+
+        nn.init.trunc_normal_(self.cls_token, std=0.02)
+        self.apply(_init_vit_weights)
+
+    def forward_features(self, x):
+        # [B, C, H, W] -> [B, num_patches, embed_dim]
+        if self.isEmbed:
+            x = self.patch_embed(x)  # [B, 196, 768]
+            # x = self.patch_embed_hMLP(x)  # [B, 196, 768]
+        # [1, 1, 768] -> [B, 1, 768]
+        cls_token = self.cls_token.expand(x.shape[0], -1, -1)
+        if self.dist_token is None:
+            x = torch.cat((cls_token, x), dim=1)  # [B, 197, 768]
+        else:
+            x = torch.cat((cls_token, self.dist_token.expand(
+                x.shape[0], -1, -1), x), dim=1)
+
+        x = self.pos_drop(x + self.pos_embed)
+        x = self.blocks(x)
+        x = self.norm(x)
+        if self.dist_token is None:
+            # 还需要返回其它[B,196,768]的特征token
+            return self.pre_logits(x[:, 0]), x[:, 1:]
+        else:
+            return x[:, 0], x[:, 1]
+
+    def forward(self, x):
+        x, patch_token = self.forward_features(x)
+        if self.head_dist is not None:
+            x, x_dist = self.head(x[0]), self.head_dist(x[1])
+            if self.training and not torch.jit.is_scripting():
+                # during inference, return the average of both classifier predictions
+                return x, x_dist
+            else:
+                return (x + x_dist) / 2
+        else:
+            x = self.head(x)
+        return x, patch_token
+
+def _init_vit_weights(m):
+    """
+    ViT weight initialization
+    :param m: module
+    """
+    if isinstance(m, nn.Linear):
+        nn.init.trunc_normal_(m.weight, std=.01)
+        if m.bias is not None:
+            nn.init.zeros_(m.bias)
+    elif isinstance(m, nn.Conv2d):
+        nn.init.kaiming_normal_(m.weight, mode="fan_out")
+        if m.bias is not None:
+            nn.init.zeros_(m.bias)
+    elif isinstance(m, nn.LayerNorm):
+        nn.init.zeros_(m.bias)
+        nn.init.ones_(m.weight)
+        
+def vit_base_patch16_224_in21k_custom(num_classes: int = 21843, has_logits: bool = True, isEmbed: bool = True, drop_ratio: float = 0.,
+                                           attn_drop_ratio: float = 0., drop_path_ratio: float = 0., keepEmbedWeight: bool = True):
+    model = VisionTransformer_custom(img_size=224,
+                                          patch_size=16,
+                                          embed_dim=768,
+                                          depth=12,
+                                          num_heads=12,
+                                          drop_ratio=drop_ratio,
+                                          attn_drop_ratio=attn_drop_ratio,
+                                          drop_path_ratio=drop_path_ratio,
+                                          representation_size=768 if has_logits else None,
+                                          num_classes=num_classes, isEmbed=isEmbed)
+    if not keepEmbedWeight:
+        del model.patch_embed
+    weight_pth = 'src/jx_vit_base_patch16_224_in21k-e5005f0a.pth'
+    weights_dict = torch.load(weight_pth)
+    # # 删除不需要的权重
+    del_keys = ['head.weight', 'head.bias'] if model.has_logits \
+        else ['pre_logits.fc.weight', 'pre_logits.fc.bias', 'head.weight', 'head.bias']
+    for k in del_keys:
+        del weights_dict[k]
+    # # # for DEBUG
+    # weight_pth = 'output/3090_pretrained/ViT-4/8_0.9926_val.tar'
+    # weights_dict = torch.load(weight_pth)["model"]
+    print(model.load_state_dict(weights_dict, strict=False))
+    return model
+
+def vit_base_patch16_224_in21k_local(num_classes: int = 21843, has_logits: bool = True, isEmbed: bool = True, drop_ratio: float = 0.,
+                                           attn_drop_ratio: float = 0., drop_path_ratio: float = 0., keepEmbedWeight: bool = True):
+    model = VisionTransformer_local(img_size=224,
+                                          patch_size=16,
+                                          embed_dim=768,
+                                          depth=12,
+                                          num_heads=12,
+                                          drop_ratio=drop_ratio,
+                                          attn_drop_ratio=attn_drop_ratio,
+                                          drop_path_ratio=drop_path_ratio,
+                                          representation_size=768 if has_logits else None,
+                                          num_classes=num_classes, isEmbed=isEmbed)
+    if not keepEmbedWeight:
+        del model.patch_embed
+    weight_pth = 'src/jx_vit_base_patch16_224_in21k-e5005f0a.pth'
+    weights_dict = torch.load(weight_pth)
+    # # 删除不需要的权重
+    del_keys = ['head.weight', 'head.bias'] if model.has_logits else ['pre_logits.fc.weight', 'pre_logits.fc.bias', 'head.weight', 'head.bias']
+    for k in del_keys:
+        del weights_dict[k]
+    print(model.load_state_dict(weights_dict, strict=False))
+    
+    # locality_vit_weight_pth = 'src/localvit_t_se4.pth'
+    # locality_vit_weights_dict = torch.load(locality_vit_weight_pth)
+    
+    return model
+
+def hLDR_embed(weight_pth:str):
+    model = CustomEmbed(img_size=(224, 224), patch_size=(16, 16), in_chans=3, embed_dim=768, norm_layer=nn.BatchNorm2d)
+    if weight_pth is not None:
+        weights_dict = torch.load(weight_pth)
+        # # 删除不需要的权重
+        keys = weights_dict.keys()
+        model_keys, _  = list(model.named_parameters())
+        for k in keys:
+            if k not in model_keys:
+                del weights_dict[k]
+            else:
+                print('Load...: ',k)
+        print(model.load_state_dict(weights_dict, strict=False))
+    
+
+class Vit_hDRMLP(nn.Module):
     def __init__(self, in_chans=3, embed_dim=768, norm_layer=nn.BatchNorm2d):
         super().__init__()
-        self.vit_model = vit_base_patch16_224_in21k_local(
+        self.vit_model = vit_base_patch16_224_in21k_custom(
             num_classes=2, has_logits=False, isEmbed=False, keepEmbedWeight=False)
         self.hproj = torch.nn.Sequential(
-            *[RegionLayerDW(in_chans, in_chans, (8,8)), # 224/8 = 28 = 4*7
-              nn.Conv2d(in_chans, embed_dim//4, kernel_size=4, stride=4, bias=False),
+            *[nn.Conv2d(in_chans, embed_dim//4, kernel_size=4, stride=4, bias=False),
               norm_layer(embed_dim//4),  # 这里采用BN，也可以采用LN
               nn.GELU(),
-              RegionLayerDW(embed_dim//4, embed_dim//4, (4,4)), # 56/4 = 14 = 2*7
+              RegionLayer(embed_dim//4, (8,8)),
               nn.Conv2d(embed_dim//4, embed_dim//4,
                         kernel_size=2, stride=2, bias=False),
               norm_layer(embed_dim//4),
-              nn.GELU(), 
-              RegionLayerDW(embed_dim//4, embed_dim//4, (2,2)), # 28/2 = 14 = 2*7
+              nn.GELU(),
+              RegionLayer(embed_dim//4, (4,4)),
               nn.Conv2d(embed_dim//4, embed_dim,
                         kernel_size=2, stride=2, bias=False),
               norm_layer(embed_dim),
               ])
+        
+
     def forward(self, x):
         x = self.hproj(x).flatten(2).transpose(1, 2)
         cls_token, patch_token = self.vit_model(x)
         return cls_token
 
     def test_time(self, x):
-        return self.forward(x)
+        x = self.hproj(x).flatten(2).transpose(1, 2)
+        cls_token, _ = self.vit_model(x)
+        return cls_token
 
-class Vit_consis_local(nn.Module):
+class Vit_consis_hDRMLP(nn.Module):
     def __init__(self, in_chans=3, embed_dim=768, norm_layer=nn.BatchNorm2d):
         super().__init__()
-        self.vit_model = vit_base_patch16_224_in21k_local(
+        self.vit_model = vit_base_patch16_224_in21k_custom(
             num_classes=2, has_logits=False, isEmbed=False, keepEmbedWeight=False)
         self.hproj = torch.nn.Sequential(
-            *[RegionLayerDW(in_chans, in_chans, (8,8)), # 224/8 = 28 = 4*7
-              nn.Conv2d(in_chans, embed_dim//4, kernel_size=4, stride=4, bias=False),
+            *[nn.Conv2d(in_chans, embed_dim//4, kernel_size=4, stride=4, bias=False),
               norm_layer(embed_dim//4),  # 这里采用BN，也可以采用LN
               nn.GELU(),
-              RegionLayerDW(embed_dim//4, embed_dim//4, (4,4)), # 56/4 = 14 = 2*7
+              RegionLayer(embed_dim//4, (8,8)),
               nn.Conv2d(embed_dim//4, embed_dim//4,
                         kernel_size=2, stride=2, bias=False),
               norm_layer(embed_dim//4),
-              nn.GELU(), 
-              RegionLayerDW(embed_dim//4, embed_dim//4, (2,2)), # 28/2 = 14 = 2*7
+              nn.GELU(),
+              RegionLayer(embed_dim//4, (4,4)),
               nn.Conv2d(embed_dim//4, embed_dim,
                         kernel_size=2, stride=2, bias=False),
               norm_layer(embed_dim),
@@ -891,6 +818,10 @@ class Vit_consis_local(nn.Module):
         self.K = nn.Linear(768, 768)
         self.Q = nn.Linear(768, 768)
         self.scale = 768 ** -0.5
+        # # consis-2
+        # self.K = nn.Identity()
+        # self.Q = nn.Identity()
+
     def forward(self, x):
         x = self.hproj(x).flatten(2).transpose(1, 2)
         cls_token, patch_token = self.vit_model(x)
@@ -907,33 +838,87 @@ class Vit_consis_local(nn.Module):
         cls_token, _ = self.vit_model(x)
         return cls_token
 
-class Vit_local_ImageNet(nn.Module):
-    def __init__(self, in_chans=3, embed_dim=768, norm_layer=nn.BatchNorm2d):
+class Vit_hDRMLP_ImageNet(nn.Module):
+    def __init__(self,  in_chans=3, embed_dim=768, norm_layer=nn.BatchNorm2d):
         super().__init__()
-        self.vit_model = vit_base_patch16_224_in21k_local(
-            num_classes=100, has_logits=False, isEmbed=False, keepEmbedWeight=False, drop_path_ratio=0.2) # drop_ratio=0.1
+        self.vit_model = vit_base_patch16_224_in21k_custom(
+            num_classes=100, has_logits=False, isEmbed=False, keepEmbedWeight=False, drop_ratio=0.1) #, drop_path_ratio=0.05
         self.hproj = torch.nn.Sequential(
-            *[RegionLayerDW(in_chans, in_chans, (8,8)), # 224/8 = 28 = 4*7
-              nn.Conv2d(in_chans, embed_dim//4, kernel_size=4, stride=4, bias=False),
+            *[nn.Conv2d(in_chans, embed_dim//4, kernel_size=4, stride=4, bias=False),
               norm_layer(embed_dim//4),  # 这里采用BN，也可以采用LN
               nn.GELU(),
-              RegionLayerDW(embed_dim//4, embed_dim//4, (4,4)), # 56/4 = 14 = 2*7
+              RegionLayer(embed_dim//4, (8,8)),
+              # nn.Identity(),
               nn.Conv2d(embed_dim//4, embed_dim//4,
                         kernel_size=2, stride=2, bias=False),
               norm_layer(embed_dim//4),
-              nn.GELU(), 
-              RegionLayerDW(embed_dim//4, embed_dim//4, (2,2)), # 28/2 = 14 = 2*7
+              nn.GELU(),
+              RegionLayer(embed_dim//4, (4,4)),
+              # nn.Identity(),
               nn.Conv2d(embed_dim//4, embed_dim,
                         kernel_size=2, stride=2, bias=False),
               norm_layer(embed_dim),
               ])
+       
     def forward(self, x):
         x = self.hproj(x).flatten(2).transpose(1, 2)
+        cls_token, _ = self.vit_model(x)
+        return cls_token
+
+class Vit_local(nn.Module):
+    def __init__(self, weight_pth=None):
+        super().__init__()
+        self.vit_model = vit_base_patch16_224_in21k_local(
+            num_classes=2, has_logits=False, isEmbed=False, keepEmbedWeight=False)
+        self.custom_embed = hLDR_embed(weight_pth)
+    def forward(self, x):
+        x = self.custom_embed(x)
+        cls_token, patch_token = self.vit_model(x)
+        return cls_token
+    def test_time(self, x):
+        return self.forward(x)
+
+class Vit_consis_local(nn.Module):
+    def __init__(self, weight_pth=None):
+        super().__init__()
+        self.vit_model = vit_base_patch16_224_in21k_local(
+            num_classes=2, has_logits=False, isEmbed=False, keepEmbedWeight=False)
+        self.custom_embed = hLDR_embed(weight_pth)
+        # consis-1
+        self.K = nn.Linear(768, 768)
+        self.Q = nn.Linear(768, 768)
+        self.scale = 768 ** -0.5
+    def forward(self, x):
+        x = self.custom_embed(x)
+        cls_token, patch_token = self.vit_model(x)
+        # # consis-1
+        consis_map = (self.K(patch_token) @
+                      self.Q(patch_token).transpose(-2, -1)) * self.scale
+        # # consis-2 add norm
+        # consis_map_norm = torch.norm(patch_token, p=2, dim=2, keepdim=True)
+        # consis_map = 0.5 + 0.5*((self.K(patch_token) @ self.Q(patch_token).transpose(-2, -1)) / (consis_map_norm@consis_map_norm.transpose(-2, -1)))
+        return cls_token, consis_map
+
+    def test_time(self, x):
+        x = self.custom_embed(x)
+        cls_token, _ = self.vit_model(x)
+        return cls_token
+
+class Vit_local_ImageNet(nn.Module):
+    def __init__(self, weight_pth=None):
+        super().__init__()
+        self.vit_model = vit_base_patch16_224_in21k_local(
+            num_classes=100, has_logits=False, isEmbed=False, keepEmbedWeight=False, drop_ratio=0.2) # drop_ratio=0.1
+        self.custom_embed = hLDR_embed(weight_pth)
+    def forward(self, x):
+        x = self.custom_embed(x)
         cls_token, patch_token = self.vit_model(x)
         return cls_token
 
     def test_time(self, x):
         return self.forward(x)
+
+
 
 if __name__ == '__main__':
     from torchinfo import summary

@@ -104,7 +104,7 @@ def main(args):
                                              pin_memory=True
                                              )
     
-    model = Net()
+    model = Net('')
 
     model = model.to('cuda')
     
@@ -120,17 +120,21 @@ def main(args):
         #         para.requires_grad_(False)
         #     else:
         #         print("training {}".format(name))
-
+    ## DEBUG
+    # for name, para in model.named_parameters():
+    #    print(name) 
+    # print(aaaaa)
+    ##
     for name, para in model.named_parameters():
-            # 除head, pre_logits外 其他权重全部冻结
-            if "head" not in name and "pre_logits" not in name and 'hproj' not in name and 'conv' not in name:
-                para.requires_grad_(False)
-            else:
-                print("training {}".format(name))
+        # 除head, pre_logits conv外 其他权重全部冻结
+        if "head" not in name and "pre_logits" not in name  and 'conv' not in name:  # and 'hproj' not in name
+            para.requires_grad_(False)
+        else:
+            print("training {}".format(name))
     pg = [p for p in model.parameters() if p.requires_grad]
     # optimizer = torch.optim.SGD(pg, lr=1e-3, momentum=0.9, weight_decay=5E-5)
     optimizer = torch.optim.AdamW(
-        pg, lr=1e-3, betas=(0.9, 0.999), weight_decay=0.3)  # 6e-5  3e-5  2e-5 wd默认1e-2
+        pg, lr=1e-3, betas=(0.9, 0.999), weight_decay=0.1)  # 6e-5  3e-5  2e-5 wd默认1e-2
    
     iter_loss = []
     train_losses = []

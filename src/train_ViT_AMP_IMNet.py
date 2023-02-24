@@ -104,7 +104,7 @@ def main(args):
                                              pin_memory=True
                                              )
     
-    model = Net('')
+    model = Net('output/ViT-IMN-DP_vit_02_20_00_41_34/weights/35_0.1998_MINloss.tar')
 
     model = model.to('cuda')
     
@@ -127,7 +127,7 @@ def main(args):
     ##
     for name, para in model.named_parameters():
         # 除head, pre_logits conv外 其他权重全部冻结
-        if "head" not in name and "pre_logits" not in name  and 'conv' not in name:  # and 'hproj' not in name
+        if "head" not in name and "pre_logits" not in name  and 'blocks.0.' not in name  and 'blocks.1.' not in name and  'blocks.2.' not in name  and 'blocks.3.' not in name and 'custom_embed' not in name :  
             para.requires_grad_(False)
         else:
             print("training {}".format(name))

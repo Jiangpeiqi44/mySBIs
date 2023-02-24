@@ -82,7 +82,7 @@ class CustomEmbed(nn.Module):
               ])
         
     def forward(self, x):
-        x = self.proj(x).flatten(2).transpose(1, 2)
+        x = self.hproj(x).flatten(2).transpose(1, 2)
         return x
     
 class hMLP_stem(nn.Module):
@@ -448,6 +448,7 @@ class Block_local(nn.Module):
                  attn_drop_ratio=0.,
                  drop_path_ratio=0.,
                  norm_layer=nn.LayerNorm, 
+                 act_layer=nn.GELU,
                  act='hs', 
                  wo_dp_conv=False, 
                  dp_first=False):
@@ -752,16 +753,22 @@ def vit_base_patch16_224_in21k_local(num_classes: int = 21843, has_logits: bool 
 def hLDR_embed(weight_pth:str):
     model = CustomEmbed(img_size=(224, 224), patch_size=(16, 16), in_chans=3, embed_dim=768, norm_layer=nn.BatchNorm2d)
     if weight_pth is not None:
-        weights_dict = torch.load(weight_pth)
+        weights_dict = torch.load(weight_pth)['model']
         # # 删除不需要的权重
-        keys = weights_dict.keys()
-        model_keys, _  = list(model.named_parameters())
+        keys = list(weights_dict.keys())
+        # print(keys)
+        # model_keys = []
+        # for name, param in model.named_parameters():
+        #     model_keys.append(name)
+        # print(model_keys)
         for k in keys:
-            if k not in model_keys:
+            if 'hproj' not in k:
                 del weights_dict[k]
             else:
-                print('Load...: ',k)
+                print('Load: ',k)
         print(model.load_state_dict(weights_dict, strict=False))
+        
+    return model
     
 
 class Vit_hDRMLP(nn.Module):

@@ -115,7 +115,6 @@ def mask_patch(reg, img, five_key):
     elif reg == 9:
         mask_patch = remove_eyes(
             img, five_key, 'b') + remove_nose(img, five_key) + remove_mouth(img, five_key)
-    mask_patch, mask_bi = random_deform(
-        (mask_patch*255).astype(np.uint8), 5, 5)
-    return (mask_patch/255).reshape(mask_patch.shape+(1,)), (mask_bi/255).reshape(mask_bi.shape+(1,))
+    mask_patch, mask_bi = random_deform((mask_patch*255).astype(np.uint8), 5, 5)
+    return (mask_patch/255).astype(np.float32).reshape(mask_patch.shape+(1,)), (mask_bi/255).astype(np.float32).reshape(mask_bi.shape+(1,))
 # add done

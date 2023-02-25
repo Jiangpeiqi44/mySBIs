@@ -20,7 +20,7 @@ from utils.funcs import load_json
 from datetime import datetime
 from tqdm import tqdm
 # from my_xcep_vit_model import Vit_consis as Net
-from vit_custom_model import Vit_consis_hDRMLP as Net
+from vit_custom_model import Vit_consis_hDRMLPv2 as Net
 # from torch.cuda.amp import autocast as autocast, GradScaler
 import math
 
@@ -167,11 +167,11 @@ def main(args):
     last_auc = 0
     last_val_auc = 0
     weight_dict = {}
-    n_weight = 3
+    n_weight = 4
     # 添加针对loss最小的几组pth
     last_val_loss = 0
     weight_dict_loss = {}
-    n_weight_loss = 2
+    n_weight_loss = 1
 
     for epoch in range(n_epoch):
         np.random.seed(seed + epoch)

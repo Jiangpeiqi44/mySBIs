@@ -266,7 +266,7 @@ class SBI_Dataset(Dataset):
                 mask_f = cv2.resize(
                     mask, (map_shape, map_shape), interpolation=cv2.INTER_LINEAR).astype('float32')
 
-                mask_r = np.ones((196, 196))
+                mask_r = np.ones((196, 196),dtype='float32')
                 mask_f = self.Consistency2D(mask_f)  # ssim_patch，mask_f
 
                 flag = False

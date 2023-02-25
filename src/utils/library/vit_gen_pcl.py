@@ -193,8 +193,8 @@ class BIOnlineGeneration():
             background_landmark = background_landmark[:68]
         
         # 全脸Mask
-        # if False:
-        if np.random.rand() < 0.75:
+        if True:
+        # if np.random.rand() < 0.75:
             mask = random_get_hull(background_landmark, background_face)
 
             # ## random deform mask
@@ -206,7 +206,7 @@ class BIOnlineGeneration():
                 raise NotImplementedError
 
             self.not_aug_flag = False  # False
-            isDownScale = True  # False
+            isDownScale = False  # False
             isBIBlend = False  # False
             blur_flag = True  # True
             if isDownScale:
@@ -292,7 +292,7 @@ class BIOnlineGeneration():
                 background_face = self.source_transforms(
                         image=background_face.astype(np.uint8))['image']
             # 直接混合
-            blended_face, mask = dynamic_blend(foreground_face, background_face, mask[:,:,0], blur_flag=False)
+            blended_face, _ = dynamic_blend(foreground_face, background_face, mask[:,:,0], 1, blur_flag=False)
         return blended_face, mask_bi, mask
 
     def search_similar_face(self, this_landmark, background_face_path):

@@ -289,7 +289,7 @@ class SBI_Dataset(Dataset):
             landmark = landmark[:68]
             
         # if np.random.rand() < 0.75:
-        if True:
+        if False:
             # 执行标准SBI
             if exist_bi:
                 logging.disable(logging.FATAL)
@@ -322,7 +322,8 @@ class SBI_Dataset(Dataset):
         else:
             # 执行随机五官区域
             five_key = get_five_key(landmark)
-            reg = np.random.randint(0, 10)
+            # reg = np.random.randint(0, 10)
+            reg = 4
             # 得到deform后的mask
             mask, mask_bi = mask_patch(reg, img, five_key)
             source = img.copy()

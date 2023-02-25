@@ -67,7 +67,7 @@ class SBI_Dataset(Dataset):
             # try:
                 filename = self.image_list[idx]
                 # if np.random.rand() < 0.75:
-                if True:
+                if False:
                     # IBI与BI进行整合
 
                     # # 读取做背景图片的lm和bbox

@@ -251,14 +251,16 @@ class BIOnlineGeneration():
                 # blended_face, mask = wavelet_blend(
                 #     foreground_face, background_face, mask[:, :, 0])
                 if self.not_aug_flag:
-                    if np.random.rand() < 0.5:
+                    # if np.random.rand() < 0.5:
+                    if True:
                         blended_face, mask = dynamic_blend(
                             foreground_face, background_face, mask[:, :, 0], 1, blur_flag=blur_flag)
                     else:
                         blended_face, mask = dynamic_blend_align(
                             foreground_face, background_face, mask[:, :, 0], 1, blur_flag=blur_flag)
                 else:
-                    if np.random.rand() < 0.5:
+                    # if np.random.rand() < 0.5:
+                    if True:
                         blended_face, mask = dynamic_blend(
                             foreground_face, background_face, mask[:, :, 0])
                     else:

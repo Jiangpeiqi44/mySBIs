@@ -227,8 +227,8 @@ class BIOnlineGeneration():
                 foreground_face = colorTransfer(
                     background_face, foreground_face, mask*255)
             elif self.stats == 'IBI':
-                # foreground_face = colorTransfer(
-                #     background_face, foreground_face, mask*255)
+                foreground_face = colorTransfer(
+                    background_face, foreground_face, mask*255)
                 if np.random.rand() < 0.5:
                     self.not_aug_flag = True
                 if np.random.rand() < 0.5:
@@ -251,16 +251,16 @@ class BIOnlineGeneration():
                 # blended_face, mask = wavelet_blend(
                 #     foreground_face, background_face, mask[:, :, 0])
                 if self.not_aug_flag:
-                    # if np.random.rand() < 0.5:
-                    if True:
+                    if np.random.rand() < 0.5:
+                    # if True:
                         blended_face, mask = dynamic_blend(
                             foreground_face, background_face, mask[:, :, 0], 1, blur_flag=blur_flag)
                     else:
                         blended_face, mask = dynamic_blend_align(
                             foreground_face, background_face, mask[:, :, 0], 1, blur_flag=blur_flag)
                 else:
-                    # if np.random.rand() < 0.5:
-                    if True:
+                    if np.random.rand() < 0.5:
+                    # if True:
                         blended_face, mask = dynamic_blend(
                             foreground_face, background_face, mask[:, :, 0])
                     else:
@@ -315,7 +315,7 @@ class BIOnlineGeneration():
             all_candidate_path = filter(
                 lambda k: k != background_face_path, all_candidate_path)
             all_candidate_path = list(all_candidate_path)
-            all_candidate_path = random.sample(self.ibi_data_list, k=4)
+            all_candidate_path = random.sample(self.ibi_data_list, k=3)
             all_candidate_path = ['{}_{}'.format(
                 vid_id, os.path.basename(i)) for i in all_candidate_path]
         else:
@@ -470,20 +470,10 @@ def dynamic_blend_align(source, target, mask, blend_ratio=None, blur_flag=True):
         # 这里进行对齐，而不是直接reshape
         h1, w1, _ = target.shape
         h2, w2, _ = source.shape
-        h_max, w_max = max(h1, h2), max(w1, w2)
-        delta_s_h = h_max - h2 if h_max - h2 > 0 else 0
-        delta_s_w = w_max - w2 if w_max - w2 > 0 else 0
-        delta_t_h = h_max - h1 if h_max - h1 > 0 else 0
-        delta_t_w = w_max - w1 if w_max - w1 > 0 else 0
-        pad_mask = np.pad(mask, ((0, delta_t_h), (0, delta_t_w)), 'constant')
-        pad_source = np.pad(
-            source, ((0, delta_s_h), (0, delta_s_w), (0, 0)), 'constant')
-        pad_target = np.pad(
-            target, ((0, delta_t_h), (0, delta_t_w), (0, 0)), 'constant')
-        # print(pad_mask.shape,pad_source.shape,pad_target.shape)
-        mask = pad_mask
-        source = pad_source
-        target = pad_target
+        h_new, w_new = min(h1, h2), min(w1, w2)
+        mask = mask[0:h_new, 0:w_new]
+        source = source[0:h_new, 0:w_new]
+        target = target[0:h_new, 0:w_new]
     if blur_flag:
         mask_blured = get_blend_mask(mask)
     else:
@@ -497,9 +487,6 @@ def dynamic_blend_align(source, target, mask, blend_ratio=None, blur_flag=True):
         mask_blured_ret = mask_blured
     else:
         mask_blured_ret = get_blend_mask(mask)*blend_ratio
-    if slice_flag:
-        img_blended = img_blended[0:h1, 0:w1, :]
-        mask_blured_ret = mask_blured_ret[0:h1, 0:w1, :]
     return img_blended, mask_blured_ret
 
 

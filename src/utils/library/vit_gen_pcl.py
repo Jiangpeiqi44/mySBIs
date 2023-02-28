@@ -193,8 +193,8 @@ class BIOnlineGeneration():
             background_landmark = background_landmark[:68]
         
         # 全脸Mask
-        # if True:
-        if np.random.rand() < 0.5:
+        if True:
+        # if np.random.rand() < 0.5:
             mask = random_get_hull(background_landmark, background_face)
 
             # ## random deform mask
@@ -227,8 +227,8 @@ class BIOnlineGeneration():
                 foreground_face = colorTransfer(
                     background_face, foreground_face, mask*255)
             elif self.stats == 'IBI':
-                # foreground_face = colorTransfer(
-                #     background_face, foreground_face, mask*255)
+                foreground_face = colorTransfer(
+                    background_face, foreground_face, mask*255)
                 if np.random.rand() < 0.5:
                     self.not_aug_flag = True
                 if np.random.rand() < 0.5:

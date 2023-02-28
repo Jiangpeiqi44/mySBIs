@@ -89,8 +89,8 @@ class SBI_Dataset(Dataset):
                     landmark_bi = self.reorder_landmark(landmark_bi)
                     # # 通过IBI或BI方法混合
                     logging.disable(logging.FATAL)
-                    if np.random.rand() < 0.5:
-                    # if True:
+                    # if np.random.rand() < 0.5:
+                    if True:
                         # # BI方法
                         self.bi.stats = 'BI'
                     else:

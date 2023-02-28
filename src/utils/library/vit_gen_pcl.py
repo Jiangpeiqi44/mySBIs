@@ -193,8 +193,8 @@ class BIOnlineGeneration():
             background_landmark = background_landmark[:68]
         
         # 全脸Mask
-        if True:
-        # if np.random.rand() < 0.75:
+        # if True:
+        if np.random.rand() < 0.5:
             mask = random_get_hull(background_landmark, background_face)
 
             # ## random deform mask
@@ -227,8 +227,8 @@ class BIOnlineGeneration():
                 foreground_face = colorTransfer(
                     background_face, foreground_face, mask*255)
             elif self.stats == 'IBI':
-                foreground_face = colorTransfer(
-                    background_face, foreground_face, mask*255)
+                # foreground_face = colorTransfer(
+                #     background_face, foreground_face, mask*255)
                 if np.random.rand() < 0.5:
                     self.not_aug_flag = True
                 if np.random.rand() < 0.5:
@@ -282,11 +282,13 @@ class BIOnlineGeneration():
         # 五官区域Mask
         else:
             five_key = get_five_key(background_landmark)
-            # reg = np.random.randint(0, 10)
-            reg = 4 # 只换嘴部
+            reg = np.random.randint(0, 10)
+            # reg = 6 # 只换嘴部
             # 得到deform后的mask
             mask, mask_bi = mask_patch(reg, background_face, five_key)
             # ##随机对源或目标进行变换
+            foreground_face = colorTransfer(
+                    background_face, foreground_face, mask_bi*255)
             if np.random.rand() < 0.5:
                 foreground_face = self.source_transforms(
                         image=foreground_face.astype(np.uint8))['image']
@@ -294,7 +296,13 @@ class BIOnlineGeneration():
                 background_face = self.source_transforms(
                         image=background_face.astype(np.uint8))['image']
             # 直接混合
-            blended_face, _ = dynamic_blend(foreground_face, background_face, mask[:,:,0], 1, blur_flag=False)
+            # if True:
+            if np.random.rand() < 0.5:
+                blended_face, _ = dynamic_blend(foreground_face, background_face, mask[:,:,0], blur_flag=False)
+            # blended_face, mask = blendImages(foreground_face, background_face, mask_bi*255)
+            else:
+                blended_face, _ = dynamic_blend_align(foreground_face, background_face, mask[:,:,0], blur_flag=False)
+                
         return blended_face, mask_bi, mask
 
     def search_similar_face(self, this_landmark, background_face_path):
@@ -315,7 +323,7 @@ class BIOnlineGeneration():
             all_candidate_path = filter(
                 lambda k: k != background_face_path, all_candidate_path)
             all_candidate_path = list(all_candidate_path)
-            all_candidate_path = random.sample(self.ibi_data_list, k=3)
+            all_candidate_path = random.sample(self.ibi_data_list, k=5)
             all_candidate_path = ['{}_{}'.format(
                 vid_id, os.path.basename(i)) for i in all_candidate_path]
         else:

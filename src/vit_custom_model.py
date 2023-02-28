@@ -346,12 +346,12 @@ class RegionLayerDWBN(nn.Module):
         self.in_channels = in_channels
         self.out_channels = out_channels
         self.grid = grid
-
         self.region_layers = dict()
-
+        self.res_1x1conv = dict()
         for i in range(self.grid[0]):
             for j in range(self.grid[1]):
                 module_name = 'region_conv_%d_%d' % (i, j)
+                res_1x1conv_module_name = module_name+'_1x1conv'
                 self.region_layers[module_name] = nn.Sequential(
                     nn.BatchNorm2d(self.in_channels),
                     nn.GELU(),
@@ -361,9 +361,14 @@ class RegionLayerDWBN(nn.Module):
                     nn.GELU(),
                     nn.Conv2d(in_channels=self.in_channels, out_channels=self.out_channels,kernel_size=1, stride=1 ,bias=True) #这里可以有Bias，因为是全局BN
                 )
-                # #
+                
                 self.add_module(name=module_name,
                                 module=self.region_layers[module_name])
+                self.res_1x1conv[res_1x1conv_module_name] = nn.Sequential(
+                    nn.Conv2d(in_channels=self.in_channels, out_channels=self.out_channels,kernel_size=1, stride=1 ,bias=True) #这里可以有Bias，因为是全局BN
+                )
+                self.add_module(name=res_1x1conv_module_name,
+                                module=self.res_1x1conv[res_1x1conv_module_name])
 
     def forward(self, x):
         batch_size, _, height, width = x.size()
@@ -379,7 +384,8 @@ class RegionLayerDWBN(nn.Module):
 
             for j, grid in enumerate(input_grid_list_of_a_row):
                 module_name = 'region_conv_%d_%d' % (i, j)
-                grid = self.region_layers[module_name](grid.contiguous()) + grid
+                res_1x1conv_module_name = module_name+'_1x1conv'
+                grid = self.region_layers[module_name](grid.contiguous()) + self.res_1x1conv[res_1x1conv_module_name](grid.contiguous())  # 此处修改了通道大小
                 output_grid_list_of_a_row.append(grid)
 
             output_row = torch.cat(output_grid_list_of_a_row, dim=3)
@@ -395,13 +401,13 @@ class HierarchicalMultiScaleRegionLayer(nn.Module):
         super().__init__()
         self.in_channels = in_channels
         self.out_channels = out_channels
-        self.first_conv = nn.Conv2d(self.in_channels, self.out_channels, kernel_size=3, stride=1, padding=1, bias=True), # [768,224,224] -> [768//16,224,224] 这里可以有Bias，因为后面是分块BN
+        self.first_conv = nn.Conv2d(self.in_channels, self.out_channels, kernel_size=3, stride=1, padding=1, bias=True) # [768,224,224] -> [768//16,224,224] 这里可以有Bias，因为后面是分块BN
         # BN 和 Gelu在Region里
         # 这里设计多层级的Region Layer
         self.branch1 = RegionLayerDWBN(self.out_channels, self.out_channels//2, (8,8))
         self.branch2 = RegionLayerDWBN(self.out_channels//2, self.out_channels//4, (4,4))
         self.branch3 = RegionLayerDWBN(self.out_channels//4, self.out_channels//4, (2,2))
-        self.norm_layer = nn.BatchNorm2d(self.out_channels//4) # Region后再加BN
+        self.norm_layer = nn.BatchNorm2d(self.out_channels) # Region后再加BN
         self.gelu = nn.GELU()
 
 
@@ -1143,7 +1149,6 @@ class Vit_consis_hDRMLPv2(nn.Module):
         x = self.custom_embed(x)
         cls_token, patch_token = self.vit_model(x)
         return cls_token
-
 
 class Vit_hDRMLPv3_ImageNet(nn.Module):
     def __init__(self, weight_pth=None):

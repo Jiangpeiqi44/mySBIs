@@ -15,7 +15,7 @@ from utils.logs import log
 from utils.funcs import load_json
 from datetime import datetime
 from tqdm import tqdm
-from vit_custom_model import Vit_local_ImageNet as Net
+from vit_custom_model import Vit_hDRMLPv3_ImageNet as Net
 from torch.cuda.amp import autocast as autocast, GradScaler
 import math
 import torchvision.transforms as transforms

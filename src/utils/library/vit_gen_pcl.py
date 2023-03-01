@@ -206,21 +206,22 @@ class BIOnlineGeneration():
                 raise NotImplementedError
 
             self.not_aug_flag = False  # False
-            isDownScale = False  # False
+            isDownScale = True  # False
             isBIBlend = False  # False
             blur_flag = True  # True
             if isDownScale:
                 # 进行Resize
-                h, w, c = background_face.shape
-                ori_size = (w, h)
-                size_down = random.randint(128, 317)
-                aug_size = (size_down, size_down)
-                background_face = cv2.resize(
-                    background_face, aug_size, interpolation=cv2.INTER_LINEAR).astype('uint8')
-                foreground_face = cv2.resize(
-                    foreground_face, aug_size, interpolation=cv2.INTER_LINEAR).astype('uint8')
-                mask = cv2.resize(
-                    mask, aug_size, interpolation=cv2.INTER_LINEAR).astype('float32')
+                if np.random.rand() < 0.5:
+                    h, w, c = background_face.shape
+                    ori_size = (w, h)
+                    size_down = random.randint(128, 317)
+                    aug_size = (size_down, size_down)
+                    background_face = cv2.resize(
+                        background_face, aug_size, interpolation=cv2.INTER_LINEAR).astype('uint8')
+                    foreground_face = cv2.resize(
+                        foreground_face, aug_size, interpolation=cv2.INTER_LINEAR).astype('uint8')
+                    mask = cv2.resize(
+                        mask, aug_size, interpolation=cv2.INTER_LINEAR).astype('float32')
 
             # ## apply color transfer
             if self.stats == 'BI':
@@ -478,10 +479,21 @@ def dynamic_blend_align(source, target, mask, blend_ratio=None, blur_flag=True):
         # 这里进行对齐，而不是直接reshape
         h1, w1, _ = target.shape
         h2, w2, _ = source.shape
-        h_new, w_new = min(h1, h2), min(w1, w2)
-        mask = mask[0:h_new, 0:w_new]
-        source = source[0:h_new, 0:w_new]
-        target = target[0:h_new, 0:w_new]
+        h_max, w_max = max(h1, h2), max(w1, w2)
+        delta_s_h = max(h_max - h2, 0)
+        delta_s_w = max(w_max - w2, 0)
+        delta_t_h = max(h_max - h1, 0)
+        delta_t_w = max(w_max - w1, 0)
+        pad_mask = np.pad(mask, ((0, delta_t_h), (0, delta_t_w)), 'constant')
+        pad_source = np.pad(
+            source, ((0, delta_s_h), (0, delta_s_w), (0, 0)), 'constant')
+        pad_target = np.pad(
+            target, ((0, delta_t_h), (0, delta_t_w), (0, 0)), 'constant')
+        # print(pad_mask.shape,pad_source.shape,pad_target.shape)
+        mask = pad_mask
+        source = pad_source
+        target = pad_target
+        slice_flag = True
     if blur_flag:
         mask_blured = get_blend_mask(mask)
     else:
@@ -495,6 +507,9 @@ def dynamic_blend_align(source, target, mask, blend_ratio=None, blur_flag=True):
         mask_blured_ret = mask_blured
     else:
         mask_blured_ret = get_blend_mask(mask)*blend_ratio
+    if slice_flag:
+        img_blended = img_blended[0:h1, 0:w1, :]
+        mask_blured_ret = mask_blured_ret[0:h1, 0:w1, :]
     return img_blended, mask_blured_ret
 
 

@@ -14,7 +14,7 @@ from tqdm import tqdm
 from torchvision import  utils
 
 def main():
-    seed = 42   # 默认 seed = 5
+    seed = 5   # 默认 seed = 5
     random.seed(seed)
     torch.manual_seed(seed)
     np.random.seed(seed)

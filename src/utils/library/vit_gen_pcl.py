@@ -131,7 +131,7 @@ def colorTransfer(src, dst, mask):
 class BIOnlineGeneration():
     def __init__(self):
 
-        with open('src/utils/library/ff_lm.json', 'r') as f:
+        with open('src/utils/library/ff_lm_8.json', 'r') as f:
             self.landmarks_record = json.load(f)
             self.data_list = []
             for k, v in self.landmarks_record.items():
@@ -206,12 +206,13 @@ class BIOnlineGeneration():
                 raise NotImplementedError
 
             self.not_aug_flag = False  # False
-            isDownScale = True  # False
+            isDownScale = False  # False
             isBIBlend = False  # False
             blur_flag = True  # True
-            if isDownScale:
+            if np.random.rand() < 0.5:
                 # 进行Resize
-                if np.random.rand() < 0.5:
+                isDownScale = True
+            if isDownScale:
                     h, w, c = background_face.shape
                     ori_size = (w, h)
                     size_down = random.randint(128, 317)

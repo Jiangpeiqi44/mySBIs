@@ -210,8 +210,8 @@ class BIOnlineGeneration():
             isBIBlend = False  # False
             blur_flag = True  # True
 
-            if np.random.rand() < 0.5:
-                isDownScale = True
+            # if np.random.rand() < 0.5:
+            #     isDownScale = True
                 # if np.random.rand() < 0.25:
                 #     isBIBlend = True
 

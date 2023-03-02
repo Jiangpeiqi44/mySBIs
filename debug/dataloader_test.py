@@ -18,19 +18,19 @@ class TestDataset(Dataset):
     
 def worker_init_fn(worker_id):
     # np.random.seed(np.random.get_state()[1][0] + worker_id)
-    # print(np.random.get_state()[1][0])
+    print(np.random.get_state()[1][0:10])
     # print(torch.utils.data.get_worker_info())
     print(torch.initial_seed())
-    worker_seed = torch.initial_seed() % 2**32
-    np.random.seed(worker_seed)
+    # worker_seed = torch.initial_seed() % 2**32
+    # np.random.seed(worker_seed)
 
 if __name__ == '__main__':
     simple_dataset = TestDataset()
     dataloader = DataLoader(simple_dataset, 
-                                             batch_size=1,
-                                             shuffle=False,
-                                             worker_init_fn=worker_init_fn,
-                                             num_workers=1)
+                            batch_size=1,
+                            shuffle=False,
+                            worker_init_fn=worker_init_fn,
+                            num_workers=1)
     n_epoch = 2
     seed = 42
     random.seed(seed)

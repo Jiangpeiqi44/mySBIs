@@ -3,9 +3,6 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import numpy as np
-import os
-from PIL import Image
-import sys
 import random
 import warnings
 # from utils.ibi_wavelet import SBI_Dataset
@@ -19,7 +16,7 @@ from utils.logs import log
 from utils.funcs import load_json
 from datetime import datetime
 from tqdm import tqdm
-from vit_custom_model import Vit_consis_local as Net
+from vit_custom_model import Vit_consis_hDRMLPv3 as Net
 from torch.cuda.amp import autocast as autocast, GradScaler
 import math
 
@@ -90,19 +87,19 @@ def main(args):
                                                batch_size=batch_size//2,
                                                shuffle=True,
                                                collate_fn=train_dataset.collate_fn,
-                                               num_workers=15,
+                                               num_workers=14,
                                                pin_memory=True,
-                                               drop_last=True,
-                                               worker_init_fn=train_dataset.worker_init_fn
+                                               drop_last=True
                                                )
+    # ,worker_init_fn=train_dataset.worker_init_fn
     val_loader = torch.utils.data.DataLoader(val_dataset,
                                              batch_size=batch_size,
                                              shuffle=False,
                                              collate_fn=val_dataset.collate_fn,
-                                             num_workers=15,
-                                             pin_memory=True,
-                                             worker_init_fn=val_dataset.worker_init_fn
+                                             num_workers=14,
+                                             pin_memory=True
                                              )
+    # ,worker_init_fn=val_dataset.worker_init_fn
 
     model = Net()
 
@@ -157,7 +154,7 @@ def main(args):
     last_auc = 0
     last_val_auc = 0
     weight_dict = {}
-    n_weight = 3
+    n_weight = 5
     # 添加针对loss最小的几组pth
     last_val_loss = 0
     weight_dict_loss = {}

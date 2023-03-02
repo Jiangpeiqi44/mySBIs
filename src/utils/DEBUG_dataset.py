@@ -37,7 +37,7 @@ else:
 
 class SBI_Dataset(Dataset):
     def __init__(self, phase='train', image_size=224, n_frames=8):
-
+        print('init SBI')
         assert phase in ['train', 'val', 'test']
 
         image_list, label_list = init_ff(phase, 'frame', n_frames=n_frames)
@@ -289,7 +289,7 @@ class SBI_Dataset(Dataset):
             landmark = landmark[:68]
             
         # if np.random.rand() < 0.75:
-        if False:
+        if True:
             # 执行标准SBI
             if exist_bi:
                 logging.disable(logging.FATAL)
@@ -673,4 +673,4 @@ else:
     from .funcs import IoUfrom2bboxes, crop_face, RandomDownScale
     if exist_bi:
         from utils.library.vit_gen_pcl import random_get_hull, BIOnlineGeneration
-        from library.oragn_mask import get_five_key, mask_patch
+        from utils.library.oragn_mask import get_five_key, mask_patch

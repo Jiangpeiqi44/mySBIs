@@ -6,7 +6,7 @@ import random
 # from utils.ibi_wavelet import SBI_Dataset
 # from utils.bi_wavelet import SBI_Dataset
 # from utils.sbi_default import SBI_Dataset
-from utils.MixBI import SBI_Dataset
+from utils.DEBUG_dataset import SBI_Dataset
 
 from utils.funcs import load_json
 from tqdm import tqdm
@@ -32,7 +32,7 @@ def main():
                                                batch_size=batch_size//2,
                                                shuffle=False,
                                                collate_fn=train_dataset.collate_fn,
-                                               num_workers=1,
+                                               num_workers=0,
                                                pin_memory=False,
                                                drop_last=True,
                                                worker_init_fn=train_dataset.worker_init_fn

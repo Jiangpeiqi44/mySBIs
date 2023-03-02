@@ -3,6 +3,13 @@ from torch.utils.data import Dataset,DataLoader
 import numpy as np
 import random
 
+
+def seed_torch(seed=1029):
+	random.seed(seed)
+	np.random.seed(seed)
+	torch.manual_seed(seed)
+	torch.cuda.manual_seed(seed)
+        
 class TestDataset(Dataset):
     def __init__(self):
         self.datas = np.arange(8)
@@ -33,15 +40,11 @@ if __name__ == '__main__':
                             num_workers=1)
     n_epoch = 2
     seed = 42
-    random.seed(seed)
-    torch.manual_seed(seed)
-    np.random.seed(seed)
+    seed_torch(seed)
     # torch.cuda.manual_seed(seed)
     for epoch in range(n_epoch):
         print('epoch_%d'%epoch)
-        # np.random.seed(seed+epoch)
-        torch.manual_seed(seed+epoch)
-        # np.random.seed(seed)
+        seed_torch(seed+epoch)
         for data in dataloader:
             print(data)
 

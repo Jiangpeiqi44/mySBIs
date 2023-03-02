@@ -27,6 +27,11 @@ def compute_accuray(pred, true):
     tmp = pred_idx == true.cpu().numpy()
     return sum(tmp)/len(pred_idx)
 
+def seed_torch(seed=1029):
+	random.seed(seed)
+	np.random.seed(seed)
+	torch.manual_seed(seed)
+	torch.cuda.manual_seed(seed)
 
 class CosineAnnealingLRWarmup(torch.optim.lr_scheduler.CosineAnnealingLR):
     def __init__(self, optimizer, T_max, eta_min=1.0e-8, last_epoch=-1, verbose=False,
@@ -68,10 +73,7 @@ def main(args):
     cfg = load_json(args.config)
 
     seed = 42   # 默认 seed = 5
-    random.seed(seed)
-    torch.manual_seed(seed)
-    np.random.seed(seed)
-    torch.cuda.manual_seed(seed)
+    seed_torch(seed)
     torch.backends.cudnn.deterministic = False
     torch.backends.cudnn.benchmark = True  # False
     torch.backends.cuda.matmul.allow_tf32 = True
@@ -175,7 +177,7 @@ def main(args):
     n_weight_loss = 2
 
     for epoch in range(n_epoch):
-        np.random.seed(seed + epoch)
+        seed_torch(seed + epoch)
         train_loss = 0.
         train_acc = 0.
         model.train(mode=True)
@@ -213,7 +215,7 @@ def main(args):
         val_acc = 0.
         output_dict = []
         target_dict = []
-        np.random.seed(seed)
+        seed_torch(seed)
         for step, data in enumerate(tqdm(val_loader)):
             img = data[0].to(device, non_blocking=True).float()
             target = data[1].to(device, non_blocking=True).long()

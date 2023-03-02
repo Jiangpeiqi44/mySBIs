@@ -66,7 +66,7 @@ class SBI_Dataset(Dataset):
         while flag:
             try:
                 filename = self.image_list[idx]
-                if np.random.rand() < 0.75:
+                if np.random.rand() < 0.5:
                 # if False:
                     # IBI与BI进行整合
 
@@ -89,8 +89,8 @@ class SBI_Dataset(Dataset):
                     landmark_bi = self.reorder_landmark(landmark_bi)
                     # # 通过IBI或BI方法混合
                     logging.disable(logging.FATAL)
-                    if np.random.rand() < 0.75:
-                    # if True:
+                    # if np.random.rand() < 0.75:
+                    if True:
                         # # BI方法
                         self.bi.stats = 'BI'
                     else:
@@ -503,9 +503,9 @@ class SBI_Dataset(Dataset):
         return data
 
     def worker_init_fn(self, worker_id):
-        np.random.seed(np.random.get_state()[1][0] + worker_id)
-        # worker_seed = torch.initial_seed() % 2**32
-        # np.random.seed(worker_seed)
+        # np.random.seed(np.random.get_state()[1][0] + worker_id)
+        worker_seed = torch.initial_seed() % 2**32
+        np.random.seed(worker_seed)
 
 def convert_consis(map):
     assert map.shape==(196,196)

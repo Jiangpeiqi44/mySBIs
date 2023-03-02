@@ -2,3 +2,4 @@
 **.pth
 **.tar
 **/imgs/*.png
+**/ff_lm.json

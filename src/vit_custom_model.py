@@ -157,8 +157,8 @@ class hDRMLPv4Embed(nn.Module):
               nn.GELU(),
 
               HierarchicalMultiScaleRegionLayerv2(embed_dim//16, embed_dim//16),
-              
-              nn.Conv2d(embed_dim//16, embed_dim//4, kernel_size=4, stride=4, bias=False), # [768//16,224,224] -> [768//4,56,56]
+              # in -> in*(1+0.5+0.25)
+              nn.Conv2d((int((1+0.5+0.25)*embed_dim//16)), embed_dim//4, kernel_size=4, stride=4, bias=False), # [768//16,224,224] -> [768//4,56,56]
               norm_layer(embed_dim//4),  # 这里采用BN，也可以采用LN
               nn.GELU(),
               
@@ -513,7 +513,6 @@ class HierarchicalMultiScaleRegionLayer(nn.Module):
         
         return out
 
-
 class HierarchicalMultiScaleRegionLayerv2(nn.Module):
     
     def __init__(self, in_channels, out_channels):
@@ -522,19 +521,25 @@ class HierarchicalMultiScaleRegionLayerv2(nn.Module):
         self.out_channels = out_channels
         # BN 和 Gelu在Region里
         # 这里设计多层级的Region Layer
-        self.branch1 = RegionLayerDWv2(self.out_channels, self.out_channels//2, (8,8))
-        self.branch2 = RegionLayerDWv2(self.out_channels//2, self.out_channels//4, (4,4))
-        self.branch3 = RegionLayerDWv2(self.out_channels//4, self.out_channels//4, (2,2))
-        self.norm_layer = nn.BatchNorm2d(self.out_channels) # Region后再加BN
+        self.conv_res = nn.Conv2d(in_channels=self.in_channels, out_channels=int(self.out_channels*(1+0.5+0.25)),kernel_size=3, stride=1, padding=1, bias=False)
+        self.branch1 = RegionLayerDW(self.out_channels, self.out_channels, (7,7))
+        self.conv1 = nn.Conv2d(in_channels=self.out_channels, out_channels=self.out_channels//2,kernel_size=3, stride=1, padding=1, bias=False)
+        self.bn1 = nn.BatchNorm2d(self.out_channels//2)
+        self.branch2 = RegionLayerDW(self.out_channels//2, self.out_channels//2, (4,4))
+        self.conv2 = nn.Conv2d(in_channels=self.out_channels//2, out_channels=self.out_channels//4,kernel_size=3, stride=1, padding=1, bias=False)
+        self.bn2 = nn.BatchNorm2d(self.out_channels//4)
+        self.branch3 = RegionLayerDW(self.out_channels//4, self.out_channels//4, (2,2))
+        
+        self.norm_layer = nn.BatchNorm2d(int(self.out_channels*(1+0.5+0.25))) # Region后再加BN
         self.gelu = nn.GELU()
 
 
     def forward(self, x):
         local_branch1 = self.branch1(x)
-        local_branch2 = self.branch2(local_branch1)
-        local_branch3 = self.branch3(local_branch2)
+        local_branch2 = self.branch2(self.gelu(self.bn1(self.conv1(local_branch1))))
+        local_branch3 = self.branch3(self.gelu(self.bn2(self.conv2(local_branch2))))
         local_out = torch.cat((local_branch1, local_branch2, local_branch3), 1)
-        out = x + local_out
+        out = self.conv_res(x) + local_out
         out = self.norm_layer(out)
         out = self.gelu(out)
         

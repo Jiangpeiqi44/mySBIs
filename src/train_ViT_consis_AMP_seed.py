@@ -72,10 +72,7 @@ def main(args):
     cfg = load_json(args.config)
 
     seed = 42   # 默认 seed = 5
-    random.seed(seed)
-    torch.manual_seed(seed)
-    np.random.seed(seed)
-    torch.cuda.manual_seed(seed)
+    seed_torch(seed)
     torch.backends.cudnn.deterministic = False
     torch.backends.cudnn.benchmark = True  # False
     torch.backends.cuda.matmul.allow_tf32 = True
@@ -94,8 +91,7 @@ def main(args):
                                                collate_fn=train_dataset.collate_fn,
                                                num_workers=14,
                                                pin_memory=True,
-                                               drop_last=True,
-                                               worker_init_fn=train_dataset.worker_init_fn
+                                               drop_last=True
                                                )
     # ,worker_init_fn=train_dataset.worker_init_fn
     val_loader = torch.utils.data.DataLoader(val_dataset,
@@ -103,8 +99,7 @@ def main(args):
                                              shuffle=False,
                                              collate_fn=val_dataset.collate_fn,
                                              num_workers=14,
-                                             pin_memory=True,
-                                             worker_init_fn=val_dataset.worker_init_fn
+                                             pin_memory=True
                                              )
     # ,worker_init_fn=val_dataset.worker_init_fn
 
@@ -168,7 +163,7 @@ def main(args):
     n_weight_loss = 1
 
     for epoch in range(n_epoch):
-        np.random.seed(seed + epoch)
+        seed_torch(seed + epoch)
         train_loss = 0.
         train_acc = 0.
         model.train(mode=True)
@@ -209,7 +204,7 @@ def main(args):
         val_acc = 0.
         output_dict = []
         target_dict = []
-        np.random.seed(seed)
+        seed_torch(seed)
         for step, data in enumerate(tqdm(val_loader)):
             img = data['img'].to(device, non_blocking=True).float()
             target = data['label'].to(device, non_blocking=True).long()

@@ -49,6 +49,7 @@ def main():
     n_epoch = 5
     for epoch in range(n_epoch):
         np.random.seed(seed + epoch)
+        # np.random.seed(seed)
         epoch_first_data = True
         for step, data in enumerate(tqdm(train_loader)):
             img = data['img']

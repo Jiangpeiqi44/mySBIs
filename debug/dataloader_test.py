@@ -13,15 +13,18 @@ class TestDataset(Dataset):
 
     def __getitem__(self, index):
         data = self.datas[index]
+        print(np.random.get_state()[1][0:5])
         random_data = np.random.uniform(0.0, 1.0)
-        
+        print(np.random.get_state()[1][0:5])
         return  data, random_data
     
     def worker_init_fn(self, worker_id):
-        # np.random.seed(np.random.get_state()[1][0] + worker_id)
-        print(np.random.get_state()[1][0])
-        worker_seed = torch.initial_seed() % 2**32
-        np.random.seed(worker_seed)
+        np.random.seed(np.random.get_state()[1][0] + worker_id)
+        # print(np.random.get_state()[1][0])
+        print(torch.utils.data.get_worker_info())
+        print(torch.initial_seed())
+        # worker_seed = torch.initial_seed() % 2**32
+        # np.random.seed(worker_seed)
 
 if __name__ == '__main__':
     simple_dataset = TestDataset()
@@ -32,12 +35,13 @@ if __name__ == '__main__':
                                              num_workers=1)
     n_epoch = 2
     seed = 42
-    random.seed(seed)
-    torch.manual_seed(seed)
+    # random.seed(seed)
+    # torch.manual_seed(seed)
     np.random.seed(seed)
-    torch.cuda.manual_seed(seed)
+    # torch.cuda.manual_seed(seed)
     for epoch in range(n_epoch):
         print('epoch_%d'%epoch)
         np.random.seed(seed + epoch)
         for step, data in enumerate(dataloader):
             print(data)
+            

@@ -206,7 +206,7 @@ class BIOnlineGeneration():
                 raise NotImplementedError
 
             self.not_aug_flag = False  # False
-            isDownScale = False  # False
+            isDownScale = True  # False
             isBIBlend = False  # False
             blur_flag = True  # True
             if isDownScale:
@@ -250,16 +250,16 @@ class BIOnlineGeneration():
                 # blended_face, mask = wavelet_blend(
                 #     foreground_face, background_face, mask[:, :, 0])
                 if self.not_aug_flag:
-                    # if np.random.rand() < 0.5:
-                    if True:
+                    if np.random.rand() < 0.5:
+                    # if True:
                         blended_face, mask = dynamic_blend(
                             foreground_face, background_face, mask[:, :, 0], 1, blur_flag=blur_flag)
                     else:
                         blended_face, mask = dynamic_blend_align(
                             foreground_face, background_face, mask[:, :, 0], 1, blur_flag=blur_flag)
                 else:
-                    # if np.random.rand() < 0.5:
-                    if True:
+                    if np.random.rand() < 0.5:
+                    # if True:
                         blended_face, mask = dynamic_blend(
                             foreground_face, background_face, mask[:, :, 0])
                     else:

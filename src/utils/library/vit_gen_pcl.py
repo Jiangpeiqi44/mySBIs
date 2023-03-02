@@ -209,9 +209,9 @@ class BIOnlineGeneration():
             isDownScale = False  # False
             isBIBlend = False  # False
             blur_flag = True  # True
-            # if np.random.rand() < 0.5:
-            #     # 进行Resize
-            #     isDownScale = True
+            if np.random.rand() < 0.5:
+                # 进行Resize
+                isDownScale = True
             if isDownScale:
                     h, w, c = background_face.shape
                     ori_size = (w, h)

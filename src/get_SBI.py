@@ -13,12 +13,15 @@ from tqdm import tqdm
 
 from torchvision import  utils
 
+def seed_torch(seed=1029):
+	random.seed(seed)
+	np.random.seed(seed)
+	torch.manual_seed(seed)
+	torch.cuda.manual_seed(seed)
+        
 def main():
     seed = 5   # 默认 seed = 5
-    random.seed(seed)
-    torch.manual_seed(seed)
-    np.random.seed(seed)
-    torch.cuda.manual_seed(seed)
+    seed_torch(seed)
     torch.backends.cudnn.deterministic =True
     torch.backends.cudnn.benchmark = False  # False
 
@@ -32,26 +35,23 @@ def main():
                                                batch_size=batch_size//2,
                                                shuffle=False,
                                                collate_fn=train_dataset.collate_fn,
-                                               num_workers=0,
+                                               num_workers=1,
                                                pin_memory=False,
-                                               drop_last=True,
-                                               worker_init_fn=train_dataset.worker_init_fn
+                                               drop_last=True
                                                )
     val_loader = torch.utils.data.DataLoader(val_dataset,
                                              batch_size=batch_size,
                                              shuffle=False,
                                              collate_fn=val_dataset.collate_fn,
                                              num_workers=1,
-                                             pin_memory=False,
-                                             worker_init_fn=val_dataset.worker_init_fn
+                                             pin_memory=False
                                              )
 
     n_epoch = 5
     for epoch in range(n_epoch):
-        np.random.seed(seed + epoch)
-        # np.random.seed(seed)
+        seed_torch(seed)
         epoch_first_data = True
-        for step, data in enumerate(tqdm(train_loader)):
+        for step, data in enumerate(tqdm(val_loader)):
             img = data['img']
             if epoch_first_data:
                 epoch_first_data = False

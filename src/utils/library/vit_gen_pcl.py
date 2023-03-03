@@ -209,6 +209,12 @@ class BIOnlineGeneration():
             isDownScale = False  # False
             isBIBlend = False  # False
             blur_flag = True  # True
+
+            if np.random.rand() < 0.5:
+                isDownScale = True
+                if np.random.rand() < 0.5:
+                    isBIBlend = True
+            
             if isDownScale:
                 # 进行Resize
                 h, w, c = background_face.shape
@@ -231,8 +237,8 @@ class BIOnlineGeneration():
                 #     background_face, foreground_face, mask*255)
                 if np.random.rand() < 0.5:
                     self.not_aug_flag = True
-                if np.random.rand() < 0.5:
-                    blur_flag = False
+                    if np.random.rand() < 0.5:
+                        blur_flag = False
 
             # ## 添加STG 如果是IBI有概率触发不增强，仅保留混合边界
             if not self.not_aug_flag:
@@ -251,7 +257,7 @@ class BIOnlineGeneration():
                 # blended_face, mask = wavelet_blend(
                 #     foreground_face, background_face, mask[:, :, 0])
                 if self.not_aug_flag:
-                    if np.random.rand() < 0.25:
+                    if np.random.rand() < 0.5:
                     # if True:
                         blended_face, mask = dynamic_blend(
                             foreground_face, background_face, mask[:, :, 0], 1, blur_flag=blur_flag)
@@ -259,7 +265,7 @@ class BIOnlineGeneration():
                         blended_face, mask = dynamic_blend_align(
                             foreground_face, background_face, mask[:, :, 0], 1, blur_flag=blur_flag)
                 else:
-                    if np.random.rand() < 0.25:
+                    if np.random.rand() < 0.5:
                     # if True:
                         blended_face, mask = dynamic_blend(
                             foreground_face, background_face, mask[:, :, 0])
@@ -303,7 +309,7 @@ class BIOnlineGeneration():
         min_dist = 99999999
         if self.stats == 'BI':
             # random sample 5000 frame from all frams:
-            all_candidate_path = random.sample(self.data_list, k=3000)
+            all_candidate_path = random.sample(self.data_list, k=2500)
 
             # filter all frame that comes from the same video as background face
             all_candidate_path = filter(lambda k: name_resolve(k)[
@@ -315,7 +321,7 @@ class BIOnlineGeneration():
             all_candidate_path = filter(
                 lambda k: k != background_face_path, all_candidate_path)
             all_candidate_path = list(all_candidate_path)
-            all_candidate_path = random.sample(all_candidate_path, k=4) # BUG HERE!
+            all_candidate_path = random.sample(all_candidate_path, k=3) # BUG HERE!
             all_candidate_path = ['{}_{}'.format(
                 vid_id, os.path.basename(i)) for i in all_candidate_path]
         else:

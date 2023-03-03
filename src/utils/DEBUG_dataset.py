@@ -37,7 +37,7 @@ else:
 
 class SBI_Dataset(Dataset):
     def __init__(self, phase='train', image_size=224, n_frames=8):
-        print('init SBI')
+        # print('init SBI')
         assert phase in ['train', 'val', 'test']
 
         image_list, label_list = init_ff(phase, 'frame', n_frames=n_frames)

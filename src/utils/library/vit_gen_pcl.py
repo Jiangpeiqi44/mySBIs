@@ -497,7 +497,8 @@ def dynamic_blend_align(source, target, mask, blend_ratio=None, blur_flag=True):
         mask = pad_mask
         source = pad_source
         target = pad_target
-        slice_flag = True
+        if np.random.rand() < 0.5:
+            slice_flag = True
     if blur_flag:
         mask_blured = get_blend_mask(mask)
     else:

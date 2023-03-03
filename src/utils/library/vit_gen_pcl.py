@@ -251,16 +251,16 @@ class BIOnlineGeneration():
                 # blended_face, mask = wavelet_blend(
                 #     foreground_face, background_face, mask[:, :, 0])
                 if self.not_aug_flag:
-                    # if np.random.rand() < 0.5:
-                    if True:
+                    if np.random.rand() < 0.25:
+                    # if True:
                         blended_face, mask = dynamic_blend(
                             foreground_face, background_face, mask[:, :, 0], 1, blur_flag=blur_flag)
                     else:
                         blended_face, mask = dynamic_blend_align(
                             foreground_face, background_face, mask[:, :, 0], 1, blur_flag=blur_flag)
                 else:
-                    # if np.random.rand() < 0.5:
-                    if True:
+                    if np.random.rand() < 0.25:
+                    # if True:
                         blended_face, mask = dynamic_blend(
                             foreground_face, background_face, mask[:, :, 0])
                     else:
@@ -303,7 +303,7 @@ class BIOnlineGeneration():
         min_dist = 99999999
         if self.stats == 'BI':
             # random sample 5000 frame from all frams:
-            all_candidate_path = random.sample(self.data_list, k=2500)
+            all_candidate_path = random.sample(self.data_list, k=3000)
 
             # filter all frame that comes from the same video as background face
             all_candidate_path = filter(lambda k: name_resolve(k)[

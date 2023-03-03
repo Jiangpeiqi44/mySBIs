@@ -210,8 +210,9 @@ def main(args):
             target = data['label'].to(device, non_blocking=True).long()
             target_map = data['map'].to(device, non_blocking=True).float()
             with torch.no_grad():
-                output, map = model(img)
-                loss = criterion(output, target)
+                with autocast():
+                    output, map = model(img)
+                    loss = criterion(output, target)
             loss_value = loss.item()
             iter_loss.append(loss_value)
             val_loss += loss_value

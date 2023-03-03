@@ -16,7 +16,7 @@ from utils.logs import log
 from utils.funcs import load_json
 from datetime import datetime
 from tqdm import tqdm
-from vit_custom_model import Vit_consis_hDRMLPv3 as Net
+from vit_custom_model import Vit_consis_hDRMLPv4 as Net
 from torch.cuda.amp import autocast as autocast, GradScaler
 import math
 
@@ -210,8 +210,9 @@ def main(args):
             target = data['label'].to(device, non_blocking=True).long()
             target_map = data['map'].to(device, non_blocking=True).float()
             with torch.no_grad():
-                output, map = model(img)
-                loss = criterion(output, target)
+                with autocast():
+                    output, map = model(img)
+                    loss = criterion(output, target)
             loss_value = loss.item()
             iter_loss.append(loss_value)
             val_loss += loss_value

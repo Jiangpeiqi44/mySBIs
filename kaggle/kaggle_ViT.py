@@ -1,31 +1,37 @@
 import os
 import torch
+import torchvision
 import torch.nn as nn
 import torch.nn.functional as F
 import numpy as np
+# from PIL import Image
+# import sys
 import random
 import warnings
-# from utils.ibi_wavelet import SBI_Dataset
-# from utils.bi_wavelet import SBI_Dataset
-# from utils.sbi_default import SBI_Dataset
-from utils.MixBI_Map import SBI_Dataset
-from utils.scheduler import LinearDecayLR
-from sklearn.metrics import confusion_matrix, roc_auc_score
+# from utils.scheduler import LinearDecayLR
+# from sklearn.metrics import confusion_matrix, roc_auc_score
 import argparse
 from utils.logs import log
 from utils.funcs import load_json
 from datetime import datetime
 from tqdm import tqdm
-from vit_custom_model import Vit_consis_hDRMLPv3 as Net
-from torch.cuda.amp import autocast as autocast, GradScaler
+from kaggle_model import Vit_hDRMLPv4_ImageNet as Net
+# from torch.cuda.amp import autocast as autocast, GradScaler
 import math
+import torchvision.transforms as transforms
 
-
+# os.environ['CUDA_LAUNCH_BLOCKING'] = '1'
+# os.environ['CUDA_VISIBAL_DEVICES'] ='0'
 def compute_accuray(pred, true):
     pred_idx = pred.argmax(dim=1).cpu().data.numpy()
     tmp = pred_idx == true.cpu().numpy()
     return sum(tmp)/len(pred_idx)
 
+def seed_torch(seed=1029):
+	random.seed(seed)
+	np.random.seed(seed)
+	torch.manual_seed(seed)
+	torch.cuda.manual_seed(seed)
 
 class CosineAnnealingLRWarmup(torch.optim.lr_scheduler.CosineAnnealingLR):
     def __init__(self, optimizer, T_max, eta_min=1.0e-8, last_epoch=-1, verbose=False,
@@ -67,10 +73,7 @@ def main(args):
     cfg = load_json(args.config)
 
     seed = 42   # 默认 seed = 5
-    random.seed(seed)
-    torch.manual_seed(seed)
-    np.random.seed(seed)
-    torch.cuda.manual_seed(seed)
+    seed_torch(seed)
     torch.backends.cudnn.deterministic = False
     torch.backends.cudnn.benchmark = True  # False
     torch.backends.cuda.matmul.allow_tf32 = True
@@ -79,49 +82,62 @@ def main(args):
 
     image_size = cfg['image_size']
     batch_size = cfg['batch_size']
-    train_dataset = SBI_Dataset(
-        phase='train', image_size=image_size, n_frames=8)
-    val_dataset = SBI_Dataset(phase='val', image_size=image_size, n_frames=8)
+    data_transform = transforms.Compose([
+        transforms.Resize(image_size),
+        transforms.CenterCrop(image_size),
+        transforms.ToTensor(),
+        transforms.Normalize(mean=[0.485, 0.456, 0.406],
+                    	     std=[0.229, 0.224, 0.225])
+    ])
+    train_dataset = torchvision.datasets.ImageFolder(root='imagenet100_train/',transform=data_transform)
+    val_dataset = torchvision.datasets.ImageFolder(root='imagenet100_val/',transform=data_transform)
 
     train_loader = torch.utils.data.DataLoader(train_dataset,
-                                               batch_size=batch_size//2,
+                                               batch_size=batch_size,
                                                shuffle=True,
-                                               collate_fn=train_dataset.collate_fn,
-                                               num_workers=14,
+                                               num_workers=8,
                                                pin_memory=True,
-                                               drop_last=True,
-                                               worker_init_fn=train_dataset.worker_init_fn
+                                               drop_last=True
                                                )
-    # ,worker_init_fn=train_dataset.worker_init_fn
     val_loader = torch.utils.data.DataLoader(val_dataset,
                                              batch_size=batch_size,
                                              shuffle=False,
-                                             collate_fn=val_dataset.collate_fn,
-                                             num_workers=14,
-                                             pin_memory=True,
-                                             worker_init_fn=val_dataset.worker_init_fn
+                                             num_workers=8,
+                                             pin_memory=True
                                              )
-    # ,worker_init_fn=val_dataset.worker_init_fn
-
+    
     model = Net()
 
     model = model.to('cuda')
-    pg = [p for p in model.parameters() if p.requires_grad]
-    # optimizer = torch.optim.SGD(pg, lr=1e-3, momentum=0.9, weight_decay=5E-5)
-    optimizer = torch.optim.AdamW(
-        pg, lr=1e-4, betas=(0.9, 0.999), weight_decay=0.3)  # 6e-5  3e-5  2e-5 wd默认1e-2
-    # optimizer = torch.optim.AdamW(
-    #     model.parameters(), lr=2e-5, betas=(0.9, 0.999))
+    
      ## add 载入已训练
     if args.weight_name is not None:
         cnn_sd = torch.load(args.weight_name)["model"]
-        
-        del_keys = ['vit_model.head.weight', 'vit_model.head.bias']
-        for k in del_keys:
-            del cnn_sd[k]
-            
         print(model.load_state_dict(cnn_sd,strict=False))
         print('Load pretrained model...')
+ 
+        # for name, para in model.named_parameters():
+        #     # 除head, pre_logits外 其他权重全部冻结
+        #     if "head" not in name and "pre_logits" not in name and 'hproj' not in name:
+        #         para.requires_grad_(False)
+        #     else:
+        #         print("training {}".format(name))
+    ## DEBUG
+    # for name, para in model.named_parameters():
+    #    print(name) 
+    # print(aaaaa)
+    ##
+    for name, para in model.named_parameters():
+        # 除head, pre_logits conv外 其他权重全部冻结
+        if "head" not in name and "pre_logits" not in name and 'custom_embed' not in name :  
+            para.requires_grad_(False)
+        else:
+            print("training {}".format(name))
+    pg = [p for p in model.parameters() if p.requires_grad]
+    # optimizer = torch.optim.SGD(pg, lr=1e-3, momentum=0.9, weight_decay=5E-5)
+    optimizer = torch.optim.AdamW(
+        pg, lr=1e-3, betas=(0.9, 0.999), weight_decay=0.3)  # 6e-5  3e-5  2e-5 wd默认1e-2
+   
     iter_loss = []
     train_losses = []
     test_losses = []
@@ -137,10 +153,9 @@ def main(args):
                                            T_max=n_epoch,
                                            eta_min=1.0e-8,
                                            last_epoch=-1,
-                                           warmup_steps=3,
+                                           warmup_steps=2,
                                            warmup_start_lr=1.0e-5)
     last_loss = 99999
-    scaler = GradScaler()
     now = datetime.now()
     # window环境下
     save_path = 'output/{}_'.format(args.session_name)+now.strftime(os.path.splitext(
@@ -151,37 +166,28 @@ def main(args):
     logger = log(path=save_path+"logs/", file="losses.logs")
 
     criterion = nn.CrossEntropyLoss()
-    criterionMap = nn.BCEWithLogitsLoss() #nn.BCELoss()
-    lbda = 2
     last_auc = 0
     last_val_auc = 0
     weight_dict = {}
-    n_weight = 5
+    n_weight = 0
     # 添加针对loss最小的几组pth
     last_val_loss = 0
     weight_dict_loss = {}
-    n_weight_loss = 1
+    n_weight_loss = 2
 
     for epoch in range(n_epoch):
-        np.random.seed(seed + epoch)
+        seed_torch(seed + epoch)
         train_loss = 0.
         train_acc = 0.
         model.train(mode=True)
         for step, data in enumerate(tqdm(train_loader)):
-            img = data['img'].to(device, non_blocking=True).float()
-            target = data['label'].to(device, non_blocking=True).long()
-            target_map = data['map'].to(device, non_blocking=True).float()
+            img = data[0].to(device, non_blocking=True).float()
+            target = data[1].to(device, non_blocking=True).long()
             optimizer.zero_grad()
-            with autocast():
-                output, map = model(img)
-                loss_cls = criterion(output, target)
-                loss_map = criterionMap(map, target_map)
-                loss = loss_cls + lbda*loss_map
-            # loss.backward()
-            # optimizer.step()
-            scaler.scale(loss).backward()
-            scaler.step(optimizer)
-            scaler.update()
+            output = model(img)
+            loss = criterion(output, target)
+            loss.backward()
+            optimizer.step()
             loss_value = loss.item()
             iter_loss.append(loss_value)
             train_loss += loss_value
@@ -204,13 +210,12 @@ def main(args):
         val_acc = 0.
         output_dict = []
         target_dict = []
-        np.random.seed(seed)
+        seed_torch(seed)
         for step, data in enumerate(tqdm(val_loader)):
-            img = data['img'].to(device, non_blocking=True).float()
-            target = data['label'].to(device, non_blocking=True).long()
-            target_map = data['map'].to(device, non_blocking=True).float()
+            img = data[0].to(device, non_blocking=True).float()
+            target = data[1].to(device, non_blocking=True).long()
             with torch.no_grad():
-                output, map = model(img)
+                output = model(img)
                 loss = criterion(output, target)
             loss_value = loss.item()
             iter_loss.append(loss_value)
@@ -221,42 +226,14 @@ def main(args):
             target_dict += target.cpu().data.numpy().tolist()
         val_losses.append(val_loss/len(val_loader))
         val_accs.append(val_acc/len(val_loader))
-        val_auc = roc_auc_score(target_dict, output_dict)
-        log_text += "val loss: {:.4f}, val acc: {:.4f}, val auc: {:.4f}".format(
+        
+        log_text += "val loss: {:.4f}, val acc: {:.4f}".format(
             val_loss/len(val_loader),
-            val_acc/len(val_loader),
-            val_auc
+            val_acc/len(val_loader)
         )
 
-        if len(weight_dict) < n_weight:
-            save_model_path = os.path.join(
-                save_path+'weights/', "{}_{:.4f}_val.tar".format(epoch+1, val_auc))
-            weight_dict[save_model_path] = val_auc
-            torch.save({
-                "model": model.state_dict(),
-                # "optimizer": optimizer.state_dict(),
-                "epoch": epoch
-            }, save_model_path)
-            last_val_auc = min([weight_dict[k] for k in weight_dict])
-
-        elif val_auc >= last_val_auc:
-            save_model_path = os.path.join(
-                save_path+'weights/', "{}_{:.4f}_val.tar".format(epoch+1, val_auc))
-            for k in weight_dict:
-                if weight_dict[k] == last_val_auc:
-                    del weight_dict[k]
-                    os.remove(k)
-                    weight_dict[save_model_path] = val_auc
-                    break
-            torch.save({
-                "model": model.state_dict(),
-                # "optimizer": optimizer.state_dict(),
-                "epoch": epoch
-            }, save_model_path)
-            last_val_auc = min([weight_dict[k] for k in weight_dict])
-
         # ## 针对loss最小添加筛选
-        if len(weight_dict_loss) < n_weight_loss and epoch/n_epoch >=0.25:
+        if len(weight_dict_loss) < n_weight_loss:
             save_model_path = os.path.join(
                 save_path+'weights/', "{}_{:.4f}_MINloss.tar".format(epoch+1, val_loss/len(val_loader)))
             weight_dict_loss[save_model_path] = val_loss/len(val_loader)
@@ -268,7 +245,7 @@ def main(args):
             last_val_loss = max([weight_dict_loss[k]
                                 for k in weight_dict_loss])
 
-        elif val_loss/len(val_loader) <= last_val_loss and epoch/n_epoch >= 0.25:
+        elif val_loss/len(val_loader) <= last_val_loss:
             save_model_path = os.path.join(
                 save_path+'weights/', "{}_{:.4f}_MINloss.tar".format(epoch+1, val_loss/len(val_loader)))
             for k in weight_dict_loss:

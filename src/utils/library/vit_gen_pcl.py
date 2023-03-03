@@ -315,7 +315,7 @@ class BIOnlineGeneration():
             all_candidate_path = filter(
                 lambda k: k != background_face_path, all_candidate_path)
             all_candidate_path = list(all_candidate_path)
-            all_candidate_path = random.sample(self.ibi_data_list, k=4)
+            all_candidate_path = random.sample(all_candidate_path, k=4) # BUG HERE!
             all_candidate_path = ['{}_{}'.format(
                 vid_id, os.path.basename(i)) for i in all_candidate_path]
         else:

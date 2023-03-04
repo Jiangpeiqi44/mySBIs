@@ -66,7 +66,7 @@ class SBI_Dataset(Dataset):
         while flag:
             # try:
                 filename = self.image_list[idx]
-                # if np.random.rand() < 0.75:
+                # if np.random.rand() < 0.5:
                 if False:
                     # IBI与BI进行整合
 
@@ -138,6 +138,7 @@ class SBI_Dataset(Dataset):
                 
                 else:               
                     # # SBI
+                    print('SBI',np.random.rand())
                     img = np.array(Image.open(filename))
                     landmark = np.load(filename.replace(
                         '.png', '.npy').replace('/frames/', self.path_lm))[0]

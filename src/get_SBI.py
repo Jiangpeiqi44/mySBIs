@@ -20,13 +20,13 @@ def seed_torch(seed=1029):
 	torch.cuda.manual_seed(seed)
         
 def main():
-    seed = 5   # 默认 seed = 5
+    seed = 3   # 默认 seed = 5
     seed_torch(seed)
     torch.backends.cudnn.deterministic =True
     torch.backends.cudnn.benchmark = False  # False
 
     image_size = 224 #cfg['image_size']
-    batch_size = 2 #cfg['batch_size']
+    batch_size = 4 #cfg['batch_size']
     train_dataset = SBI_Dataset(
         phase='train', image_size=image_size, n_frames=1)
     val_dataset = SBI_Dataset(phase='val', image_size=image_size, n_frames=1)
@@ -37,21 +37,26 @@ def main():
                                                collate_fn=train_dataset.collate_fn,
                                                num_workers=1,
                                                pin_memory=False,
-                                               drop_last=True
+                                               drop_last=True,
+                                               worker_init_fn=train_dataset.worker_init_fn
                                                )
     val_loader = torch.utils.data.DataLoader(val_dataset,
                                              batch_size=batch_size,
                                              shuffle=False,
                                              collate_fn=val_dataset.collate_fn,
                                              num_workers=1,
-                                             pin_memory=False
+                                             pin_memory=False,
+                                             worker_init_fn=val_dataset.worker_init_fn
                                              )
 
-    n_epoch = 5
+    n_epoch = 7
     for epoch in range(n_epoch):
-        seed_torch(seed)
+        # seed_torch(seed)
+        print("epoch {}".format(epoch))
+        # np.random.seed(seed+epoch)
+        np.random.seed(seed)
         epoch_first_data = True
-        for step, data in enumerate(tqdm(val_loader)):
+        for step, data in enumerate((val_loader)):
             img = data['img']
             if epoch_first_data:
                 epoch_first_data = False

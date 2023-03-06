@@ -203,7 +203,34 @@ class hDRMLPv5Embed(nn.Module):
     def forward(self, x):
         x = self.hproj(x).flatten(2).transpose(1, 2)
         return x
-    
+
+class hDRMLPv6Embed(nn.Module):
+    def __init__(self, img_size=(224, 224), patch_size=(16, 16), in_chans=3, embed_dim=768, norm_layer=nn.BatchNorm2d):
+        super().__init__()
+        num_patches = (img_size[1] // patch_size[1]) * (img_size[0] // patch_size[0])
+        self.img_size = img_size
+        self.patch_size = patch_size
+        self.num_patches = num_patches
+        self.hproj = torch.nn.Sequential(
+            *[
+              HierarchicalMultiScaleRegionLayerv3(in_chans, embed_dim//16), #[768//16,224,224] -> [768//16,224,224]
+              
+              nn.Conv2d(embed_dim//16, embed_dim//4, kernel_size=4, stride=4, bias=False), # [768//16,224,224] -> [768//4,56,56]
+              norm_layer(embed_dim//4),  # 这里采用BN，也可以采用LN
+              nn.GELU(),
+              
+              nn.Conv2d(embed_dim//4, embed_dim//4, kernel_size=2, stride=2, bias=False), # [768//4,56,56] -> [768//4,28,28]
+              norm_layer(embed_dim//4),
+              nn.GELU(),
+              
+              nn.Conv2d(embed_dim//4, embed_dim, kernel_size=2, stride=2, bias=False),  # [768//4,28,28] -> [768,14,14]
+              norm_layer(embed_dim),
+              ])
+        
+    def forward(self, x):
+        x = self.hproj(x).flatten(2).transpose(1, 2)
+        return x
+
 class hMLP_stem(nn.Module):
     """ Image to Patch Embedding
     """
@@ -347,6 +374,59 @@ class RegionLayer(nn.Module):
 
         return output
 
+# 原始方法(不加残差)
+class RegionLayerSD(nn.Module):
+    def __init__(self, in_channels, out_channels, grid=(8, 8)):
+        super().__init__()
+
+        self.in_channels = in_channels
+        self.out_channels = out_channels
+        self.grid = grid
+
+        self.region_layers = dict()
+
+        for i in range(self.grid[0]):
+            for j in range(self.grid[1]):
+                module_name = 'region_conv_%d_%d' % (i, j)
+                # # 原始方法
+                self.region_layers[module_name] = nn.Sequential(
+                    nn.BatchNorm2d(self.in_channels),
+                    nn.GELU(),
+                    nn.Conv2d(in_channels=self.in_channels, out_channels=self.out_channels,
+                              kernel_size=3, stride=1, padding=1, bias=True)
+                )
+                # #
+                self.add_module(name=module_name,
+                                module=self.region_layers[module_name])
+
+    def forward(self, x):
+        """
+        :param x:   (b, c, h, w)
+        :return:    (b, c, h, w)
+        """
+        batch_size, _, height, width = x.size()
+
+        input_row_list = torch.split(
+            x, split_size_or_sections=height//self.grid[0], dim=2)
+        output_row_list = []
+
+        for i, row in enumerate(input_row_list):
+            input_grid_list_of_a_row = torch.split(
+                row, split_size_or_sections=width//self.grid[1], dim=3)
+            output_grid_list_of_a_row = []
+
+            for j, grid in enumerate(input_grid_list_of_a_row):
+                module_name = 'region_conv_%d_%d' % (i, j)
+                grid = self.region_layers[module_name](grid.contiguous())  #此处先不加残差+ grid
+                output_grid_list_of_a_row.append(grid)
+
+            output_row = torch.cat(output_grid_list_of_a_row, dim=3)
+            output_row_list.append(output_row)
+
+        output = torch.cat(output_row_list, dim=2)
+
+        return output
+
 class RegionLayerDW(nn.Module):
     def __init__(self, in_channels, out_channels, grid=(8, 8)):
         super(RegionLayerDW, self).__init__()
@@ -457,6 +537,7 @@ class RegionLayerDWBN(nn.Module):
         return output
 
 class RegionLayerDWv2(nn.Module):
+    # conv bn relu顺序
     def __init__(self, in_channels, out_channels, grid=(8, 8)):
         super(RegionLayerDW, self).__init__()
 
@@ -517,6 +598,8 @@ class RegionLayerDWv2(nn.Module):
 
 class RegionLayerDWBNv2(nn.Module):
     ''' 
+    去掉了残差连接
+    DW里去掉了中间的BN GeLU，去掉了bias
     修改了BN顺序,需要前置Conv + Region + 后置BN (Region内部深度可分离卷积中间有BN+Gelu)
     区别在于输入Region时是分区先BN，输出后是整体区域BN（可能会不同？）
     '''
@@ -532,11 +615,8 @@ class RegionLayerDWBNv2(nn.Module):
                 self.region_layers[module_name] = nn.Sequential(
                     nn.BatchNorm2d(self.in_channels),
                     nn.GELU(),
-                    nn.Conv2d(in_channels=self.in_channels, out_channels=self.in_channels,
-                              kernel_size=3, stride=1, padding=1, groups=self.in_channels, bias=False),
-                    nn.BatchNorm2d(self.in_channels),
-                    nn.GELU(),
-                    nn.Conv2d(in_channels=self.in_channels, out_channels=self.out_channels,kernel_size=1, stride=1 ,bias=True) #这里可以有Bias，因为是全局BN
+                    nn.Conv2d(in_channels=self.in_channels, out_channels=self.in_channels, kernel_size=3, stride=1, padding=1, groups=self.in_channels, bias=False),
+                    nn.Conv2d(in_channels=self.in_channels, out_channels=self.out_channels, kernel_size=1, stride=1, bias=False)
                 )
                 self.add_module(name=module_name,
                                 module=self.region_layers[module_name])
@@ -555,7 +635,7 @@ class RegionLayerDWBNv2(nn.Module):
 
             for j, grid in enumerate(input_grid_list_of_a_row):
                 module_name = 'region_conv_%d_%d' % (i, j)
-                grid = self.region_layers[module_name](grid.contiguous()) + grid  
+                grid = self.region_layers[module_name](grid.contiguous())   #去掉残差连接，应对通道数不同情况 + grid  
                 output_grid_list_of_a_row.append(grid)
 
             output_row = torch.cat(output_grid_list_of_a_row, dim=3)
@@ -601,16 +681,13 @@ class HierarchicalMultiScaleRegionLayerv2(nn.Module):
         self.out_channels = out_channels
         # BN 和 Gelu在Region里
         # 这里设计多层级的Region Layer
-        self.conv_res = nn.Conv2d(in_channels=self.in_channels, out_channels=int(self.out_channels*(1+0.5+0.25)),kernel_size=3, stride=1, padding=1, bias=False)
-        self.branch1 = RegionLayerDW(self.out_channels, self.out_channels, (7,7))
-        self.conv1 = nn.Conv2d(in_channels=self.out_channels, out_channels=self.out_channels//2,kernel_size=3, stride=1, padding=1, bias=False)
-        self.bn1 = nn.BatchNorm2d(self.out_channels//2)
-        self.branch2 = RegionLayerDW(self.out_channels//2, self.out_channels//2, (4,4))
-        self.conv2 = nn.Conv2d(in_channels=self.out_channels//2, out_channels=self.out_channels//4,kernel_size=3, stride=1, padding=1, bias=False)
-        self.bn2 = nn.BatchNorm2d(self.out_channels//4)
-        self.branch3 = RegionLayerDW(self.out_channels//4, self.out_channels//4, (2,2))
-        
-        self.norm_layer = nn.BatchNorm2d(int(self.out_channels*(1+0.5+0.25))) # Region后再加BN
+        self.first_conv = nn.Conv2d(self.in_channels, self.out_channels, kernel_size=3, stride=1, padding=1, bias=True) # [768,224,224] -> [768//16,224,224] 这里可以有Bias，因为后面是分块BN
+        # BN 和 Gelu在Region里
+        # 这里设计多层级的Region Layer
+        self.branch1 = RegionLayerDWBN(self.out_channels, self.out_channels//2, (8,8))
+        self.branch2 = RegionLayerDWBN(self.out_channels//2, self.out_channels//4, (4,4))
+        self.branch3 = RegionLayerDWBN(self.out_channels//4, self.out_channels//4, (2,2))
+        self.norm_layer = nn.BatchNorm2d(self.out_channels) # Region后再加BN
         self.gelu = nn.GELU()
 
 
@@ -620,6 +697,35 @@ class HierarchicalMultiScaleRegionLayerv2(nn.Module):
         local_branch3 = self.branch3(self.gelu(self.bn2(self.conv2(local_branch2))))
         local_out = torch.cat((local_branch1, local_branch2, local_branch3), 1)
         out = self.conv_res(x) + local_out
+        out = self.norm_layer(out)
+        out = self.gelu(out)
+        
+        return out
+
+class HierarchicalMultiScaleRegionLayerv3(nn.Module):
+    
+    def __init__(self, in_channels, out_channels):
+        super().__init__()
+        self.in_channels = in_channels
+        self.out_channels = out_channels
+        # BN 和 Gelu在Region里
+        # 这里设计多层级的Region Layer,去除每个层级内的残差连接
+        self.first_conv = nn.Conv2d(in_channels=self.in_channels, out_channels=self.out_channels,kernel_size=5, stride=1, padding=2, bias=True)
+        self.branch1 = RegionLayerDWBNv2(self.out_channels, self.out_channels//2, (8,8))
+        self.branch2 = RegionLayerDWBNv2(self.out_channels//2, self.out_channels//4, (4,4))
+        self.branch3 = RegionLayerDWBNv2(self.out_channels//4, self.out_channels//4, (2,2))
+        
+        self.norm_layer = nn.BatchNorm2d(self.out_channels) # Region后再加BN
+        self.gelu = nn.GELU()
+
+
+    def forward(self, x):
+        x = self.first_conv(x)
+        local_branch1 = self.branch1(x)
+        local_branch2 = self.branch2(local_branch1)
+        local_branch3 = self.branch3(local_branch2)
+        local_out = torch.cat((local_branch1, local_branch2, local_branch3), 1)
+        out = x + local_out
         out = self.norm_layer(out)
         out = self.gelu(out)
         
@@ -1174,6 +1280,20 @@ def hDRMLPv5_embed(weight_pth:str):
         print(model.load_state_dict(weights_dict, strict=False))
     return model
 
+def hDRMLPv6_embed(weight_pth:str):
+    model = hDRMLPv6Embed(img_size=(224, 224), patch_size=(16, 16), in_chans=3, embed_dim=768, norm_layer=nn.BatchNorm2d)
+    if weight_pth is not None:
+        weights_dict = torch.load(weight_pth)['model']
+        # # 删除不需要的权重
+        keys = list(weights_dict.keys())
+        for k in keys:
+            if 'hproj' not in k:
+                del weights_dict[k]
+            else:
+                print('Load: ',k)
+        print(model.load_state_dict(weights_dict, strict=False))
+    return model
+
 class Vit_hDRMLP(nn.Module):
     def __init__(self, in_chans=3, embed_dim=768, norm_layer=nn.BatchNorm2d):
         super().__init__()
@@ -1496,15 +1616,56 @@ class Vit_consis_hDRMLPv5(nn.Module):
         x = self.custom_embed(x)
         cls_token, patch_token = self.vit_model(x)
         return cls_token
+
+class Vit_hDRMLPv6_ImageNet(nn.Module):
+    def __init__(self, weight_pth=None):
+        super().__init__()
+        self.vit_model = vit_base_patch16_224_in21k_custom(
+            num_classes=100, has_logits=False, isEmbed=False, keepEmbedWeight=False, drop_ratio=0.1)
+        self.custom_embed = hDRMLPv6_embed(weight_pth)
+    def forward(self, x):
+        x = self.custom_embed(x)
+        cls_token, patch_token = self.vit_model(x)
+        return cls_token
+    def test_time(self, x):
+        return self.forward(x)
+
+class Vit_consis_hDRMLPv6(nn.Module):
+    def __init__(self, weight_pth=None):
+        super().__init__()
+        self.vit_model = vit_base_patch16_224_in21k_custom(
+            num_classes=2, has_logits=False, isEmbed=False, keepEmbedWeight=False)
+        self.custom_embed = hDRMLPv6_embed(weight_pth)
+        # consis-1
+        self.K = nn.Linear(768, 768)
+        self.Q = nn.Linear(768, 768)
+        self.scale = 768 ** -0.5
+    def forward(self, x):
+        x = self.custom_embed(x)
+        cls_token, patch_token = self.vit_model(x)
+        # # consis-1
+        consis_map = (self.K(patch_token) @
+                      self.Q(patch_token).transpose(-2, -1)) * self.scale
+        # # consis-2 add norm
+        # consis_map_norm = torch.norm(patch_token, p=2, dim=2, keepdim=True)
+        # consis_map = 0.5 + 0.5*((self.K(patch_token) @ self.Q(patch_token).transpose(-2, -1)) / (consis_map_norm@consis_map_norm.transpose(-2, -1)))
+        return cls_token, consis_map
+
+    def test_time(self, x):
+        x = self.custom_embed(x)
+        cls_token, patch_token = self.vit_model(x)
+        return cls_token 
+    
+    
 if __name__ == '__main__':
     from torchinfo import summary
-    model = Vit_local()
+    model = Vit_consis_hDRMLPv6()
     # print(model.vit_model.blocks)
     # print(model)
-    # image_size = 224
-    # batch_size = 2
-    # input_s = (batch_size, 3, image_size, image_size)
-    # summary(model, input_s)
+    image_size = 224
+    batch_size = 1
+    input_s = (batch_size, 3, image_size, image_size)
+    summary(model, input_s)
     # dummy = torch.rand(batch_size, 3, image_size, image_size)
     # cls_token, consis_map = model(dummy)
     # print(consis_map.shape)

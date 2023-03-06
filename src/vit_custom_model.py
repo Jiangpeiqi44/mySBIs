@@ -184,7 +184,7 @@ class hDRMLPv5Embed(nn.Module):
             *[
               nn.Conv2d(in_chans, embed_dim//16, kernel_size=3, stride=1, padding=1, bias=True), # [768,224,224] -> [768//16,224,224]
 
-              RegionLayerDWBNv2(embed_dim//16, embed_dim//16, (7,7)), #[768//16,224,224] -> [768//16,224,224]
+              RegionLayerDWBNv2_old(embed_dim//16, embed_dim//16, (7,7)), #[768//16,224,224] -> [768//16,224,224]
               norm_layer(embed_dim//16),
               nn.GELU(),
               
@@ -595,6 +595,59 @@ class RegionLayerDWv2(nn.Module):
         output = torch.cat(output_row_list, dim=2)
 
         return output
+
+class RegionLayerDWBNv2_old(nn.Module):
+    ''' 
+    修改了BN顺序,需要前置Conv + Region + 后置BN (Region内部深度可分离卷积中间有BN+Gelu)
+    区别在于输入Region时是分区先BN，输出后是整体区域BN（可能会不同？）
+    '''
+    def __init__(self, in_channels, out_channels, grid=(8, 8)):
+        super().__init__()
+        self.in_channels = in_channels
+        self.out_channels = out_channels
+        self.grid = grid
+        self.region_layers = dict()
+        for i in range(self.grid[0]):
+            for j in range(self.grid[1]):
+                module_name = 'region_conv_%d_%d' % (i, j)
+                self.region_layers[module_name] = nn.Sequential(
+                    nn.BatchNorm2d(self.in_channels),
+                    nn.GELU(),
+                    nn.Conv2d(in_channels=self.in_channels, out_channels=self.in_channels,
+                              kernel_size=3, stride=1, padding=1, groups=self.in_channels, bias=False),
+                    nn.BatchNorm2d(self.in_channels),
+                    nn.GELU(),
+                    nn.Conv2d(in_channels=self.in_channels, out_channels=self.out_channels,kernel_size=1, stride=1 ,bias=True) #这里可以有Bias，因为是全局BN
+                )
+                self.add_module(name=module_name,
+                                module=self.region_layers[module_name])
+                
+    def forward(self, x):
+        batch_size, _, height, width = x.size()
+
+        input_row_list = torch.split(
+            x, split_size_or_sections=height//self.grid[0], dim=2)
+        output_row_list = []
+
+        for i, row in enumerate(input_row_list):
+            input_grid_list_of_a_row = torch.split(
+                row, split_size_or_sections=width//self.grid[1], dim=3)
+            output_grid_list_of_a_row = []
+
+            for j, grid in enumerate(input_grid_list_of_a_row):
+                module_name = 'region_conv_%d_%d' % (i, j)
+                grid = self.region_layers[module_name](grid.contiguous()) + grid  
+                output_grid_list_of_a_row.append(grid)
+
+            output_row = torch.cat(output_grid_list_of_a_row, dim=3)
+            output_row_list.append(output_row)
+
+        output = torch.cat(output_row_list, dim=2)
+
+        return output
+
+
+
 
 class RegionLayerDWBNv2(nn.Module):
     ''' 

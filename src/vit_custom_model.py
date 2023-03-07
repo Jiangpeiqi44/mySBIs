@@ -817,23 +817,20 @@ class HierarchicalMultiScaleRegionLayerv4(nn.Module):
         self.out_channels = out_channels
         self.first_conv = nn.Conv2d(self.in_channels, self.out_channels//2, kernel_size=3, stride=1, padding=1, bias=False) # [768,224,224] -> [768//16,224,224] 这里可以有Bias，因为后面是分块BN
         self.norm_layer_first = nn.BatchNorm2d(self.out_channels//2) # Region后再加BN
-        self.conv_1x1 = nn.Conv2d(in_channels=self.out_channels//2, out_channels=self.out_channels,kernel_size=1, stride=1 ,bias=False)
         # BN 和 Gelu在Region里
         # 这里设计多层级的Region Layer
-        self.branch1 = RegionLayerDW(self.out_channels//2, self.out_channels//2, (8,8))
-        self.branch2 = RegionLayerDWv2(self.out_channels//2, self.out_channels//4, (7,7)) #通道数不同 需要v2调整残差通道数 
-        self.branch3 = RegionLayerDW(self.out_channels//4, self.out_channels//4, (4,4))
+        self.branch1 = RegionLayerDWv2(self.out_channels//2, self.out_channels//4, (8,8))
+        self.branch2 = RegionLayerDW(self.out_channels//4, self.out_channels//4, (7,7)) #通道数不同 需要v2调整残差通道数 
         self.gelu = nn.GELU()
 
 
     def forward(self, x):
         x = self.first_conv(x)
-        x = self.gelu(self.norm_layer_first(x))
-        local_branch1 = self.branch1(x)
+        x = self.norm_layer_first(x)
+        local_branch1 = self.branch1(self.gelu(x))
         local_branch2 = self.branch2(self.gelu(local_branch1))
-        local_branch3 = self.branch3(self.gelu(local_branch2))
-        local_out = torch.cat((local_branch1, local_branch2, local_branch3), 1)
-        out = self.gelu(self.conv_1x1(x) + local_out) # 因为内部做了bn 这里直接gelu
+        local_out = torch.cat((x, local_branch1, local_branch2), 1)
+        out = self.gelu(local_out) # 因为内部做了bn 这里直接gelu
         return out
 
 

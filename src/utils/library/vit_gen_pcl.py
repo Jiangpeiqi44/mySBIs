@@ -233,8 +233,8 @@ class BIOnlineGeneration():
                 foreground_face = colorTransfer(
                     background_face, foreground_face, mask*255)
             elif self.stats == 'IBI':
-                foreground_face = colorTransfer(
-                    background_face, foreground_face, mask*255)
+                # foreground_face = colorTransfer(
+                #     background_face, foreground_face, mask*255)
                 if np.random.rand() < 0.5:
                     self.not_aug_flag = True
                 if np.random.rand() < 0.5:
@@ -257,16 +257,16 @@ class BIOnlineGeneration():
                 # blended_face, mask = wavelet_blend(
                 #     foreground_face, background_face, mask[:, :, 0])
                 if self.not_aug_flag:
-                    if np.random.rand() < 0.5:
-                    # if True:
+                    # if np.random.rand() < 0.5:
+                    if True:
                         blended_face, mask = dynamic_blend(
                             foreground_face, background_face, mask[:, :, 0], 1, blur_flag=blur_flag)
                     else:
                         blended_face, mask = dynamic_blend_align(
                             foreground_face, background_face, mask[:, :, 0], 1, blur_flag=blur_flag)
                 else:
-                    if np.random.rand() < 0.5:
-                    # if True:
+                    # if np.random.rand() < 0.5:
+                    if True:
                         blended_face, mask = dynamic_blend(
                             foreground_face, background_face, mask[:, :, 0])
                     else:
@@ -321,7 +321,7 @@ class BIOnlineGeneration():
             # all_candidate_path = filter(
             #     lambda k: k != background_face_path, all_candidate_path)
             # all_candidate_path = list(all_candidate_path)
-            all_candidate_path = random.sample(self.ibi_data_list, k=3) # BUG HERE!
+            all_candidate_path = random.sample(self.ibi_data_list, k=4) # BUG HERE!
             all_candidate_path = ['{}_{}'.format(
                 vid_id, os.path.basename(i)) for i in all_candidate_path]
         else:

@@ -16,7 +16,7 @@ from utils.logs import log
 from utils.funcs import load_json
 from datetime import datetime
 from tqdm import tqdm
-from vit_custom_model import Vit_consis_hDRMLPv4 as Net
+from vit_custom_model import Vit_consis_hDRMLPv6 as Net
 from torch.cuda.amp import autocast as autocast, GradScaler
 import math
 

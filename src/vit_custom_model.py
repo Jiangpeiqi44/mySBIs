@@ -820,9 +820,9 @@ class HierarchicalMultiScaleRegionLayerv4(nn.Module):
         self.conv_1x1 = nn.Conv2d(in_channels=self.out_channels//2, out_channels=self.out_channels,kernel_size=1, stride=1 ,bias=False)
         # BN 和 Gelu在Region里
         # 这里设计多层级的Region Layer
-        self.branch1 = RegionLayerDWv2(self.out_channels//2, self.out_channels//2, (8,8))
-        self.branch2 = RegionLayerDWv2(self.out_channels//2, self.out_channels//4, (7,7))
-        self.branch3 = RegionLayerDWv2(self.out_channels//4, self.out_channels//4, (4,4))
+        self.branch1 = RegionLayerDW(self.out_channels//2, self.out_channels//2, (8,8))
+        self.branch2 = RegionLayerDWv2(self.out_channels//2, self.out_channels//4, (7,7)) #通道数不同 需要v2调整残差通道数 
+        self.branch3 = RegionLayerDW(self.out_channels//4, self.out_channels//4, (4,4))
         self.gelu = nn.GELU()
 
 

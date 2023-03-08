@@ -16,7 +16,7 @@ from utils.logs import log
 from utils.funcs import load_json
 from datetime import datetime
 from tqdm import tqdm
-from vit_custom_model import Vit_consis_hDRMLPv6 as Net
+from vit_custom_model import Vit_consis_hDRMLPv3 as Net
 from torch.cuda.amp import autocast as autocast, GradScaler
 import math
 
@@ -160,7 +160,7 @@ def main(args):
     # 添加针对loss最小的几组pth
     last_val_loss = 0
     weight_dict_loss = {}
-    n_weight_loss = 1
+    n_weight_loss = 0
 
     for epoch in range(n_epoch):
         np.random.seed(seed + epoch)

@@ -163,8 +163,8 @@ class BIOnlineGeneration():
             self.phase = phase
 
         face_img, mask_bi, mask = self.get_blended_face(background_face_path)
-        if self.not_aug_flag:
-            mask = (1 - mask) * mask * 4
+        # if self.not_aug_flag:
+        #     mask = (1 - mask) * mask * 4
 
         return face_img, mask_bi, mask
 
@@ -212,13 +212,13 @@ class BIOnlineGeneration():
             x_ray_flag = False # False
             blend_ratio = None # None
             
-            if self.stats == 'BI':
-                if np.random.rand() < 0.25:
-                    isDownScale = True
-                    if np.random.rand() < 0.5:
-                        isBIBlend = True
-                if np.random.rand() < 0.25:
-                     x_ray_flag = True
+            # if self.stats == 'BI':
+            #     if np.random.rand() < 0.25:
+            #         isDownScale = True
+            #         if np.random.rand() < 0.5:
+            #             isBIBlend = True
+            #     if np.random.rand() < 0.25:
+            #          x_ray_flag = True
 
             if np.random.rand() < 0.5:
                 foreground_face, background_face = resize_to_match(foreground_face, background_face)
@@ -250,8 +250,9 @@ class BIOnlineGeneration():
                 if np.random.rand() < 0.5:
                     '''不增强and不blur 直接模拟边界'''
                     self.not_aug_flag = True
-                    blur_flag = False
                     blend_ratio = 1
+                    if np.random.rand() < 0.5:
+                        blur_flag = False
                 elif np.random.rand() < 0.5:
                     x_ray_flag = True
 

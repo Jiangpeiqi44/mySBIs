@@ -215,7 +215,7 @@ class BIOnlineGeneration():
             if self.stats == 'BI':
                 if np.random.rand() < 0.25:
                     isDownScale = True
-                    if np.random.rand() < 0.25:
+                    if np.random.rand() < 0.5:
                         isBIBlend = True
                 if np.random.rand() < 0.25:
                      x_ray_flag = True
@@ -234,11 +234,11 @@ class BIOnlineGeneration():
                 size_down = random.randint(128, 317)
                 aug_size = (size_down, size_down)
                 background_face = cv2.resize(
-                    background_face, aug_size, interpolation=cv2.INTER_LINEAR).astype('uint8')
+                    background_face, aug_size, interpolation=cv2.INTER_AREA).astype('uint8')
                 foreground_face = cv2.resize(
-                    foreground_face, aug_size, interpolation=cv2.INTER_LINEAR).astype('uint8')
+                    foreground_face, aug_size, interpolation=cv2.INTER_AREA).astype('uint8')
                 mask = cv2.resize(
-                    mask, aug_size, interpolation=cv2.INTER_LINEAR).astype('float32')
+                    mask, aug_size, interpolation=cv2.INTER_AREA).astype('float32')
 
             # ## apply color transfer
             if self.stats == 'BI':
@@ -252,6 +252,8 @@ class BIOnlineGeneration():
                     self.not_aug_flag = True
                     blur_flag = False
                     blend_ratio = 1
+                elif np.random.rand() < 0.5:
+                    x_ray_flag = True
 
             # ## 添加STG 如果是IBI有概率触发不增强，仅保留混合边界
             if not self.not_aug_flag:

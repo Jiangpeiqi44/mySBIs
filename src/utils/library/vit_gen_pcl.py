@@ -277,7 +277,8 @@ class BIOnlineGeneration():
                     blended_face, ori_size, interpolation=cv2.INTER_LINEAR).astype('uint8')
                 mask = cv2.resize(
                     mask, ori_size, interpolation=cv2.INTER_LINEAR).astype('float32')
-                if not isBIBlend:
+                if len(mask.shape) < 3:
+                    # 处理特殊情况
                     mask = mask.reshape(mask.shape+(1,))
 
             blended_face = blended_face.astype(np.uint8)

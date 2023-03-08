@@ -97,7 +97,8 @@ class SBI_Dataset(Dataset):
                         # # IBI方法
                         self.bi.stats = 'IBI'
                              # 获取IBI的目录
-                        idt_dir = glob(filename[:-7]+'*')
+                        # idt_dir = glob(filename[:-7]+'*')
+                        idt_dir = glob(filename[0:filename.rfind('/')+1]+'*')
                         # windows的bug
                         # idt_dir = [i.replace('\\', '/') for i in idt_dir]
                         idt_dir = [idt_dir[i] for i in range(len(idt_dir)) if os.path.isfile(idt_dir[i].replace(

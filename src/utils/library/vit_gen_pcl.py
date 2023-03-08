@@ -209,11 +209,23 @@ class BIOnlineGeneration():
             isDownScale = False  # False
             isBIBlend = False  # False
             blur_flag = True  # True
+            x_ray_flag = False # False
+            blend_ratio = None # None
+            
+            if self.stats == 'BI':
+                if np.random.rand() < 0.25:
+                    isDownScale = True
+                    if np.random.rand() < 0.25:
+                        isBIBlend = True
+                if np.random.rand() < 0.25:
+                     x_ray_flag = True
 
-            # if np.random.rand() < 0.5:
-            #     isDownScale = True
-            #     if np.random.rand() < 0.5:
-            #         isBIBlend = True
+            if np.random.rand() < 0.5:
+                foreground_face, background_face = resize_to_match(foreground_face, background_face)
+                match_flag = 0
+            else:
+                foreground_face, background_face = align_to_match(foreground_face, background_face)
+                match_flag = 1
             
             if isDownScale:
                 # 进行Resize
@@ -233,12 +245,13 @@ class BIOnlineGeneration():
                 foreground_face = colorTransfer(
                     background_face, foreground_face, mask*255)
             elif self.stats == 'IBI':
-                foreground_face = colorTransfer(
-                    background_face, foreground_face, mask*255)
+                # foreground_face = colorTransfer(
+                #     background_face, foreground_face, mask*255)     
                 if np.random.rand() < 0.5:
+                    '''不增强and不blur 直接模拟边界'''
                     self.not_aug_flag = True
-                if np.random.rand() < 0.5:
                     blur_flag = False
+                    blend_ratio = 1
 
             # ## 添加STG 如果是IBI有概率触发不增强，仅保留混合边界
             if not self.not_aug_flag:
@@ -250,28 +263,14 @@ class BIOnlineGeneration():
                         image=background_face.astype(np.uint8))['image']
             # ## blend two face  小波 or 默认方法
 
-            if isBIBlend:
-                blended_face, mask = blendImages(
-                    foreground_face, background_face, mask*255)
+            if isBIBlend == True and match_flag == 1 and self.not_aug_flag == False:
+                blended_face, mask = blendImages(foreground_face, background_face, mask*255)
             else:
                 # blended_face, mask = wavelet_blend(
                 #     foreground_face, background_face, mask[:, :, 0])
-                if self.not_aug_flag:
-                    if np.random.rand() < 0.5:
-                    # if True:
-                        blended_face, mask = dynamic_blend(
-                            foreground_face, background_face, mask[:, :, 0], 1, blur_flag=blur_flag)
-                    else:
-                        blended_face, mask = dynamic_blend_align(
-                            foreground_face, background_face, mask[:, :, 0], 1, blur_flag=blur_flag)
-                else:
-                    if np.random.rand() < 0.5:
-                    # if True:
-                        blended_face, mask = dynamic_blend(
-                            foreground_face, background_face, mask[:, :, 0])
-                    else:
-                        blended_face, mask = dynamic_blend_align(
-                            foreground_face, background_face, mask[:, :, 0])
+                blended_face, mask = dynamic_blend(
+                    foreground_face, background_face, mask[:, :, 0], blend_ratio=blend_ratio, blur_flag=blur_flag, x_ray=x_ray_flag)
+
             # ## resize back to default resolution
             if isDownScale:
                 blended_face = cv2.resize(
@@ -447,31 +446,16 @@ class RandomDownScale(alb.core.transforms_interface.ImageOnlyTransform):
 
         return img_ds
 
-
-def dynamic_blend(source, target, mask, blend_ratio=None, blur_flag=True):
-    if blur_flag:
-        mask_blured = get_blend_mask(mask)
-    else:
-        mask_blured = mask.reshape((mask.shape+(1,)))
+'''
+两种对齐方式：最后都同一至target的Size
+'''
+def resize_to_match(source, target):
     if source.shape != target.shape:
         h, w, c = target.shape
         source = cv2.resize(
             source, (w, h), interpolation=cv2.INTER_LINEAR).astype('uint8')
-    if blend_ratio == None:
-        blend_list = [0.25, 0.5, 0.75, 1, 1, 1]
-        blend_ratio = blend_list[np.random.randint(len(blend_list))]
-    mask_blured *= blend_ratio
-    img_blended = (mask_blured * source + (1 - mask_blured) * target)
-    if blur_flag:
-        mask_blured_ret = mask_blured
-    else:
-        mask_blured_ret = get_blend_mask(mask)*blend_ratio
-    return img_blended, mask_blured_ret
-
-
-def dynamic_blend_align(source, target, mask, blend_ratio=None, blur_flag=True):
-    # source 前景  target背景 mask与target对应
-    slice_flag = False
+    return source, target
+def align_to_match(source, target):
     if source.shape != target.shape:
         # 这里进行对齐，而不是直接reshape
         h1, w1, _ = target.shape
@@ -479,21 +463,20 @@ def dynamic_blend_align(source, target, mask, blend_ratio=None, blur_flag=True):
         h_max, w_max = max(h1, h2), max(w1, w2)
         delta_s_h = max(h_max - h2, 0)
         delta_s_w = max(w_max - w2, 0)
-        delta_t_h = max(h_max - h1, 0)
-        delta_t_w = max(w_max - w1, 0)
-        pad_mask = np.pad(mask, ((0, delta_t_h), (0, delta_t_w)), 'constant')
         pad_source = np.pad(
             source, ((0, delta_s_h), (0, delta_s_w), (0, 0)), 'constant')
-        pad_target = np.pad(
-            target, ((0, delta_t_h), (0, delta_t_w), (0, 0)), 'constant')
-        # print(pad_mask.shape,pad_source.shape,pad_target.shape)
-        mask = pad_mask
-        source = pad_source
-        target = pad_target
+        source = pad_source[0:h1, 0:w1, :]
+    return source, target
+
+def dynamic_blend(source, target, mask, blend_ratio=None, blur_flag=True, x_ray=False):
     if blur_flag:
         mask_blured = get_blend_mask(mask)
+        if x_ray:
+            mask_blured = 4 * (1 - mask_blured) * mask_blured
+            blend_ratio = 1
     else:
         mask_blured = mask.reshape((mask.shape+(1,)))
+    
     if blend_ratio == None:
         blend_list = [0.25, 0.5, 0.75, 1, 1, 1]
         blend_ratio = blend_list[np.random.randint(len(blend_list))]
@@ -503,11 +486,7 @@ def dynamic_blend_align(source, target, mask, blend_ratio=None, blur_flag=True):
         mask_blured_ret = mask_blured
     else:
         mask_blured_ret = get_blend_mask(mask)*blend_ratio
-    if slice_flag:
-        img_blended = img_blended[0:h1, 0:w1, :]
-        mask_blured_ret = mask_blured_ret[0:h1, 0:w1, :]
     return img_blended, mask_blured_ret
-
 
 def wavelet_blend(source, target, mask, wavelet_type='bior3.3'):
     # H W C(RGB)

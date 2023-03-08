@@ -16,7 +16,7 @@ from utils.logs import log
 from utils.funcs import load_json
 from datetime import datetime
 from tqdm import tqdm
-from vit_custom_model import Vit_consis_hDRMLPv5 as Net
+from vit_custom_model import Vit_consis_hDRMLPv7 as Net
 from torch.cuda.amp import autocast as autocast, GradScaler
 import math
 
@@ -26,7 +26,7 @@ def compute_accuray(pred, true):
     tmp = pred_idx == true.cpu().numpy()
     return sum(tmp)/len(pred_idx)
 
-def seed_torch(seed=1029):
+def seed_torch(seed):
 	random.seed(seed)
 	np.random.seed(seed)
 	torch.manual_seed(seed)
@@ -71,8 +71,7 @@ class CosineAnnealingLRWarmup(torch.optim.lr_scheduler.CosineAnnealingLR):
 def main(args):
     cfg = load_json(args.config)
 
-    seed = 33   # 默认 seed = 5
-    val_seed_T = 10 # 每10轮val变动一组
+    seed = 42   # 默认 seed = 5
     seed_torch(seed)
     torch.backends.cudnn.deterministic = False
     torch.backends.cudnn.benchmark = True  # False
@@ -110,7 +109,7 @@ def main(args):
     pg = [p for p in model.parameters() if p.requires_grad]
     # optimizer = torch.optim.SGD(pg, lr=1e-3, momentum=0.9, weight_decay=5E-5)
     optimizer = torch.optim.AdamW(
-        pg, lr=1e-4, betas=(0.9, 0.999), weight_decay=0.1)  # 6e-5  3e-5  2e-5 wd默认1e-2
+        pg, lr=1e-4, betas=(0.9, 0.999), weight_decay=0.3)  # 6e-5  3e-5  2e-5 wd默认1e-2
     # optimizer = torch.optim.AdamW(
     #     model.parameters(), lr=2e-5, betas=(0.9, 0.999))
      ## add 载入已训练
@@ -205,7 +204,7 @@ def main(args):
         val_acc = 0.
         output_dict = []
         target_dict = []
-        seed_torch(seed + epoch//val_seed_T)
+        seed_torch(seed)
         for step, data in enumerate(tqdm(val_loader)):
             img = data['img'].to(device, non_blocking=True).float()
             target = data['label'].to(device, non_blocking=True).long()

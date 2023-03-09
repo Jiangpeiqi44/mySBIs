@@ -163,8 +163,8 @@ class BIOnlineGeneration():
             self.phase = phase
 
         face_img, mask_bi, mask = self.get_blended_face(background_face_path)
-        if self.not_aug_flag:
-            mask = (1 - mask) * mask * 4
+        # if self.not_aug_flag:
+        #     mask = (1 - mask) * mask * 4
 
         return face_img, mask_bi, mask
 
@@ -194,7 +194,7 @@ class BIOnlineGeneration():
         
         # 全脸Mask
         if True:
-        # if np.random.rand() < 0.75:
+        # if np.random.rand() < 0.5:
             mask = random_get_hull(background_landmark, background_face)
 
             # ## random deform mask
@@ -209,26 +209,32 @@ class BIOnlineGeneration():
             isDownScale = False  # False
             isBIBlend = False  # False
             blur_flag = True  # True
+
+            # if np.random.rand() < 0.5:
+            #     isDownScale = True
+                # if np.random.rand() < 0.25:
+                #     isBIBlend = True
+
             if isDownScale:
-                # 进行Resize
-                h, w, c = background_face.shape
-                ori_size = (w, h)
-                size_down = random.randint(128, 317)
-                aug_size = (size_down, size_down)
-                background_face = cv2.resize(
-                    background_face, aug_size, interpolation=cv2.INTER_LINEAR).astype('uint8')
-                foreground_face = cv2.resize(
-                    foreground_face, aug_size, interpolation=cv2.INTER_LINEAR).astype('uint8')
-                mask = cv2.resize(
-                    mask, aug_size, interpolation=cv2.INTER_LINEAR).astype('float32')
+                    h, w, c = background_face.shape
+                    ori_size = (w, h)
+                    size_down = random.randint(128, 317)
+                    aug_size = (size_down, size_down)
+                    background_face = cv2.resize(
+                        background_face, aug_size, interpolation=cv2.INTER_LINEAR).astype('uint8')
+                    foreground_face = cv2.resize(
+                        foreground_face, aug_size, interpolation=cv2.INTER_LINEAR).astype('uint8')
+                    mask = cv2.resize(
+                        mask, aug_size, interpolation=cv2.INTER_LINEAR).astype('float32')
 
             # ## apply color transfer
             if self.stats == 'BI':
                 foreground_face = colorTransfer(
                     background_face, foreground_face, mask*255)
             elif self.stats == 'IBI':
-                # foreground_face = colorTransfer(
-                #     background_face, foreground_face, mask*255)
+                if np.random.rand() < 0.5:
+                    foreground_face = colorTransfer(
+                        background_face, foreground_face, mask*255)
                 if np.random.rand() < 0.5:
                     self.not_aug_flag = True
                 if np.random.rand() < 0.5:
@@ -282,11 +288,13 @@ class BIOnlineGeneration():
         # 五官区域Mask
         else:
             five_key = get_five_key(background_landmark)
-            # reg = np.random.randint(0, 10)
-            reg = 4 # 只换嘴部
+            reg = np.random.randint(0, 10)
+            # reg = 6 # 只换嘴部
             # 得到deform后的mask
             mask, mask_bi = mask_patch(reg, background_face, five_key)
             # ##随机对源或目标进行变换
+            foreground_face = colorTransfer(
+                    background_face, foreground_face, mask_bi*255)
             if np.random.rand() < 0.5:
                 foreground_face = self.source_transforms(
                         image=foreground_face.astype(np.uint8))['image']
@@ -294,7 +302,13 @@ class BIOnlineGeneration():
                 background_face = self.source_transforms(
                         image=background_face.astype(np.uint8))['image']
             # 直接混合
-            blended_face, _ = dynamic_blend(foreground_face, background_face, mask[:,:,0], 1, blur_flag=False)
+            # if True:
+            if np.random.rand() < 0.5:
+                blended_face, _ = dynamic_blend(foreground_face, background_face, mask[:,:,0], blur_flag=False)
+            # blended_face, mask = blendImages(foreground_face, background_face, mask_bi*255)
+            else:
+                blended_face, _ = dynamic_blend_align(foreground_face, background_face, mask[:,:,0], blur_flag=False)
+                
         return blended_face, mask_bi, mask
 
     def search_similar_face(self, this_landmark, background_face_path):
@@ -311,11 +325,11 @@ class BIOnlineGeneration():
 
             all_candidate_path = list(all_candidate_path)
         elif self.stats == 'IBI':
-            # all_candidate_path = self.ibi_data_list
-            # all_candidate_path = filter(
-            #     lambda k: k != background_face_path, all_candidate_path)
-            # all_candidate_path = list(all_candidate_path)
-            all_candidate_path = random.sample(self.ibi_data_list, k=4)
+            all_candidate_path = self.ibi_data_list
+            all_candidate_path = filter(
+                lambda k: k != background_face_path, all_candidate_path)
+            all_candidate_path = list(all_candidate_path)
+            all_candidate_path = random.sample(all_candidate_path, k=4)
             all_candidate_path = ['{}_{}'.format(
                 vid_id, os.path.basename(i)) for i in all_candidate_path]
         else:
@@ -471,10 +485,10 @@ def dynamic_blend_align(source, target, mask, blend_ratio=None, blur_flag=True):
         h1, w1, _ = target.shape
         h2, w2, _ = source.shape
         h_max, w_max = max(h1, h2), max(w1, w2)
-        delta_s_h = h_max - h2 if h_max - h2 > 0 else 0
-        delta_s_w = w_max - w2 if w_max - w2 > 0 else 0
-        delta_t_h = h_max - h1 if h_max - h1 > 0 else 0
-        delta_t_w = w_max - w1 if w_max - w1 > 0 else 0
+        delta_s_h = max(h_max - h2, 0)
+        delta_s_w = max(w_max - w2, 0)
+        delta_t_h = max(h_max - h1, 0)
+        delta_t_w = max(w_max - w1, 0)
         pad_mask = np.pad(mask, ((0, delta_t_h), (0, delta_t_w)), 'constant')
         pad_source = np.pad(
             source, ((0, delta_s_h), (0, delta_s_w), (0, 0)), 'constant')

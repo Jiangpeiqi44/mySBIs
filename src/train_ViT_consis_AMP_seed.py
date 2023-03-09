@@ -204,7 +204,7 @@ def main(args):
         val_acc = 0.
         output_dict = []
         target_dict = []
-        seed_torch(seed)
+        seed_torch(seed + epoch)
         for step, data in enumerate(tqdm(val_loader)):
             img = data['img'].to(device, non_blocking=True).float()
             target = data['label'].to(device, non_blocking=True).long()

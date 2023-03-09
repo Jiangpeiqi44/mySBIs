@@ -163,8 +163,8 @@ class BIOnlineGeneration():
             self.phase = phase
 
         face_img, mask_bi, mask = self.get_blended_face(background_face_path)
-        if self.not_aug_flag:
-            mask = (1 - mask) * mask * 4
+        # if self.not_aug_flag:
+        #     mask = (1 - mask) * mask * 4
 
         return face_img, mask_bi, mask
 

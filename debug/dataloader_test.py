@@ -1,14 +1,14 @@
-# import torch
+import torch
 # from torch.utils.data import Dataset,DataLoader
 # import numpy as np
 # import random
 
 
-# def seed_torch(seed=1029):
-# 	random.seed(seed)
-# 	np.random.seed(seed)
-# 	torch.manual_seed(seed)
-# 	torch.cuda.manual_seed(seed)
+def seed_torch(seed=1029):
+	random.seed(seed)
+	np.random.seed(seed)
+	torch.manual_seed(seed)
+	torch.cuda.manual_seed(seed)
         
 # class TestDataset(Dataset):
 #     def __init__(self):
@@ -71,6 +71,7 @@ class RandomDataset(object):
     def __getitem__(self, ind):
         item = [ind, np.random.randint(1, 10000), random.randint(10000, 20000), 0]
         tsfm =Transform()(item)
+        # print(np.random.rand())
         return np.array(item + tsfm)
     def __len__(self):
         return 20
@@ -82,10 +83,12 @@ def worker_init_fn(worker_id):
     np.random.seed(np.random.get_state()[1][0] + worker_id)
 
 ds = RandomDataset()
-ds = DataLoader(ds, 10, shuffle=False, num_workers=1, worker_init_fn=worker_init_fn)
-
+ds = DataLoader(ds, 10, shuffle=False, num_workers=1,worker_init_fn=worker_init_fn) #, worker_init_fn=worker_init_fn
+seed = 42
+# np.random.seed(seed)
 for epoch in range(2):
     print("epoch {}".format(epoch))
-    np.random.seed()
+    # seed_torch(seed)
+    np.random.seed(seed)
     for batch in ds:
         print(batch)

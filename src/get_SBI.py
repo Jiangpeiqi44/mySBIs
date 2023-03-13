@@ -26,7 +26,7 @@ def main():
     torch.backends.cudnn.benchmark = False  # False
 
     image_size = 224 #cfg['image_size']
-    batch_size = 4 #cfg['batch_size']
+    batch_size = 2 #cfg['batch_size']
     train_dataset = SBI_Dataset(
         phase='train', image_size=image_size, n_frames=1)
     val_dataset = SBI_Dataset(phase='val', image_size=image_size, n_frames=1)
@@ -51,10 +51,11 @@ def main():
 
     n_epoch = 7
     for epoch in range(n_epoch):
-        # seed_torch(seed)
+        # seed_torch(seed+epoch)
         print("epoch {}".format(epoch))
-        # np.random.seed(seed+epoch)
-        np.random.seed(seed)
+        np.random.seed(seed+epoch)
+        # random.seed(seed)
+        # np.random.seed(seed)
         epoch_first_data = True
         for step, data in enumerate((val_loader)):
             img = data['img']

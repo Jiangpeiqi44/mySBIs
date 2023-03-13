@@ -109,7 +109,7 @@ def main(args):
     pg = [p for p in model.parameters() if p.requires_grad]
     # optimizer = torch.optim.SGD(pg, lr=1e-3, momentum=0.9, weight_decay=5E-5)
     optimizer = torch.optim.AdamW(
-        pg, lr=4e-5, betas=(0.9, 0.999), weight_decay=0.3)  # 6e-5  3e-5  2e-5 wd默认1e-2
+        pg, lr=1e-4, betas=(0.9, 0.999), weight_decay=0.3)  # 6e-5  3e-5  2e-5 wd默认1e-2
     # optimizer = torch.optim.AdamW(
     #     model.parameters(), lr=2e-5, betas=(0.9, 0.999))
      ## add 载入已训练
@@ -138,7 +138,7 @@ def main(args):
                                            eta_min=1.0e-8,
                                            last_epoch=-1,
                                            warmup_steps=3,
-                                           warmup_start_lr=1.0e-7)
+                                           warmup_start_lr=1.0e-5)
     last_loss = 99999
     scaler = GradScaler()
     now = datetime.now()

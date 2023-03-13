@@ -16,7 +16,7 @@ from utils.logs import log
 from utils.funcs import load_json
 from datetime import datetime
 from tqdm import tqdm
-from vit_custom_model import Vit_consis_hDRMLPv8 as Net
+from vit_custom_model import Vit_consis_hDRMLPv7 as Net
 from torch.cuda.amp import autocast as autocast, GradScaler
 import math
 
@@ -109,7 +109,7 @@ def main(args):
     pg = [p for p in model.parameters() if p.requires_grad]
     # optimizer = torch.optim.SGD(pg, lr=1e-3, momentum=0.9, weight_decay=5E-5)
     optimizer = torch.optim.AdamW(
-        pg, lr=4e-5, betas=(0.9, 0.999), weight_decay=0.3)  # 6e-5  3e-5  2e-5 wd默认1e-2
+        pg, lr=1e-4, betas=(0.9, 0.999), weight_decay=0.3)  # 6e-5  3e-5  2e-5 wd默认1e-2
     # optimizer = torch.optim.AdamW(
     #     model.parameters(), lr=2e-5, betas=(0.9, 0.999))
      ## add 载入已训练
@@ -137,8 +137,8 @@ def main(args):
                                            T_max=n_epoch,
                                            eta_min=1.0e-8,
                                            last_epoch=-1,
-                                           warmup_steps=5,
-                                           warmup_start_lr=1.0e-7)
+                                           warmup_steps=3,
+                                           warmup_start_lr=1.0e-5)
     last_loss = 99999
     scaler = GradScaler()
     now = datetime.now()
@@ -156,11 +156,11 @@ def main(args):
     last_auc = 0
     last_val_auc = 0
     weight_dict = {}
-    n_weight = 5
+    n_weight = 4
     # 添加针对loss最小的几组pth
     last_val_loss = 0
     weight_dict_loss = {}
-    n_weight_loss = 0
+    n_weight_loss = 1
 
     for epoch in range(n_epoch):
         seed_torch(seed + epoch)

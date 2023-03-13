@@ -67,7 +67,7 @@ class SBI_Dataset(Dataset):
             # try:
                 filename = self.image_list[idx]
                 # if np.random.rand() < 0.5:
-                if True:
+                if False:
                     # IBI与BI进行整合
 
                     # # 读取做背景图片的lm和bbox
@@ -89,8 +89,8 @@ class SBI_Dataset(Dataset):
                     landmark_bi = self.reorder_landmark(landmark_bi)
                     # # 通过IBI或BI方法混合
                     logging.disable(logging.FATAL)
-                    if np.random.rand() < 0.5:
-                    # if True:
+                    # if np.random.rand() < 0.5:
+                    if True:
                         # # BI方法
                         self.bi.stats = 'BI'
                     else:
@@ -139,7 +139,7 @@ class SBI_Dataset(Dataset):
                 
                 else:               
                     # # SBI
-                    print('SBI',np.random.rand())
+                    print('SBI',np.random.rand(),np.random.rand(),np.random.rand(),np.random.rand(),np.random.rand(),np.random.rand())
                     img = np.array(Image.open(filename))
                     landmark = np.load(filename.replace(
                         '.png', '.npy').replace('/frames/', self.path_lm))[0]

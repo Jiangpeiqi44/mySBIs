@@ -137,7 +137,7 @@ def main(args):
                                            T_max=n_epoch,
                                            eta_min=1.0e-8,
                                            last_epoch=-1,
-                                           warmup_steps=3,
+                                           warmup_steps=5,
                                            warmup_start_lr=1.0e-7)
     last_loss = 99999
     scaler = GradScaler()

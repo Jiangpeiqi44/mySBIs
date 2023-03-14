@@ -192,7 +192,7 @@ class BIOnlineGeneration():
         foreground_face = io.imread(foreground_face_path)
         foreground_landmark_abs = reorder_landmark(np.load(
             foreground_face_path.replace('/frames/', '/landmarks/').replace('png', 'npy'))[0])
-        foreground_face, _, __, ___ = crop_face(
+        foreground_face, foreground_landmark_abs, __, ___ = crop_face(
             foreground_face, foreground_landmark_abs, margin=True, crop_by_bbox=False)
 
         # ## get random type of initial blending mask
@@ -230,7 +230,7 @@ class BIOnlineGeneration():
             #          x_ray_flag = True
 
             # if np.random.rand() < 0.25:
-            if False:
+            if True:
                 foreground_face, background_face = resize_to_match(foreground_face, background_face)
                 match_flag = 0
             else:
@@ -255,14 +255,13 @@ class BIOnlineGeneration():
             elif self.stats == 'IBI':
                 foreground_face = colorTransfer(
                     background_face, foreground_face, mask*255)     
+            if np.random.rand() < 0.15:
+                '''不增强and不blur 直接模拟边界'''
+                self.not_aug_flag = True
                 if np.random.rand() < 0.5:
-                    '''不增强and不blur 直接模拟边界'''
-                    self.not_aug_flag = True
                     blur_flag = False
-                    blend_ratio = 1
-                elif np.random.rand() < 0.5:
-                    x_ray_flag = True
-                    blend_ratio = 1
+            elif np.random.rand() < 0.15:
+                x_ray_flag = True
                 #
             # ## 添加STG 如果是IBI有概率触发不增强，仅保留混合边界
             if not self.not_aug_flag:
@@ -274,14 +273,18 @@ class BIOnlineGeneration():
                         image=background_face.astype(np.uint8))['image']
 
             # ## blend two face  小波 or 默认方法
-
             if isBIBlend == True and match_flag == 1 and self.not_aug_flag == False:
                 blended_face, mask = blendImages(foreground_face, background_face, mask*255)
             else:
                 # blended_face, mask = wavelet_blend(
                 #     foreground_face, background_face, mask[:, :, 0])
-                blended_face, mask = dynamic_blend(
-                    foreground_face, background_face, mask[:, :, 0], blend_ratio=blend_ratio, blur_flag=blur_flag, x_ray=x_ray_flag)
+                if np.random.rand() < 0.5 and self.not_aug_flag != True and x_ray_flag != True:
+                    x, y, w, h = cv2.boundingRect((mask[:,:,0]*255).astype(np.uint8))
+                    center = (x+w//2, y+h//2)
+                    blended_face = cv2.seamlessClone(foreground_face, background_face, (mask*255).astype(np.uint8), center, cv2.NORMAL_CLONE)
+                else:
+                    blended_face, mask = dynamic_blend(
+                        foreground_face, background_face, mask[:, :, 0], blend_ratio=blend_ratio, blur_flag=blur_flag, x_ray=x_ray_flag)
  
             # ## resize back to default resolution
             if isDownScale:

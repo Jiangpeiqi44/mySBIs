@@ -51,7 +51,7 @@ class SBI_Dataset(Dataset):
         print(f'SBI({phase}): {len(image_list)}')
 
         self.image_list = image_list
-        self.bi = BIOnlineGeneration()
+        self.bi = BIOnlineGeneration(phase=phase)
         self.image_size = (image_size, image_size)
         self.phase = phase
         self.n_frames = n_frames

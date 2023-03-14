@@ -83,12 +83,14 @@ def worker_init_fn(worker_id):
     np.random.seed(np.random.get_state()[1][0] + worker_id)
 
 ds = RandomDataset()
-ds = DataLoader(ds, 10, shuffle=False, num_workers=1,worker_init_fn=worker_init_fn) #, worker_init_fn=worker_init_fn
+ds = DataLoader(ds, 10, shuffle=False, num_workers=1,
+                # worker_init_fn=worker_init_fn
+                ) #, worker_init_fn=worker_init_fn
 seed = 42
-# np.random.seed(seed)
+np.random.seed(seed)
 for epoch in range(2):
     print("epoch {}".format(epoch))
     # seed_torch(seed)
-    np.random.seed(seed)
+    # np.random.seed(seed)
     for batch in ds:
         print(batch)

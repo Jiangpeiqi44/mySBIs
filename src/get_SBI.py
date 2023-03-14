@@ -38,7 +38,7 @@ def main():
                                                num_workers=1,
                                                pin_memory=False,
                                                drop_last=True,
-                                               worker_init_fn=train_dataset.worker_init_fn
+                                            #    worker_init_fn=train_dataset.worker_init_fn
                                                )
     val_loader = torch.utils.data.DataLoader(val_dataset,
                                              batch_size=batch_size,

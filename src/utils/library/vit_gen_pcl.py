@@ -255,13 +255,13 @@ class BIOnlineGeneration():
             elif self.stats == 'IBI':
                 foreground_face = colorTransfer(
                     background_face, foreground_face, mask*255)     
-            if np.random.rand() < 0.15:
-                '''不增强and不blur 直接模拟边界'''
-                self.not_aug_flag = True
-                if np.random.rand() < 0.5:
-                    blur_flag = False
-            elif np.random.rand() < 0.15:
-                x_ray_flag = True
+                if np.random.rand() < 0.15:
+                    '''不增强and不blur 直接模拟边界'''
+                    self.not_aug_flag = True
+                    if np.random.rand() < 0.5:
+                        blur_flag = False
+                # elif np.random.rand() < 0.15:
+                #     x_ray_flag = True
                 #
             # ## 添加STG 如果是IBI有概率触发不增强，仅保留混合边界
             if not self.not_aug_flag:
@@ -324,7 +324,7 @@ class BIOnlineGeneration():
         min_dist = 99999999
         if self.stats == 'BI':
             # random sample 5000 frame from all frams:
-            all_candidate_path = random.sample(self.data_list, k=3500)
+            all_candidate_path = random.sample(self.data_list, k=2500)
 
             # filter all frame that comes from the same video as background face
             all_candidate_path = filter(lambda k: name_resolve(k)[
@@ -336,7 +336,7 @@ class BIOnlineGeneration():
             all_candidate_path = filter(
                 lambda k: k != background_face_path, all_candidate_path)
             all_candidate_path = list(all_candidate_path)
-            all_candidate_path = random.sample(all_candidate_path, k=8) # BUG HERE!
+            all_candidate_path = random.sample(all_candidate_path, k=5) # BUG HERE!
             all_candidate_path = ['{}_{}'.format(
                 vid_id, os.path.basename(i)) for i in all_candidate_path]
         else:

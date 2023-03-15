@@ -16,7 +16,7 @@ from utils.logs import log
 from utils.funcs import load_json
 from datetime import datetime
 from tqdm import tqdm
-from vit_custom_model import Vit_consis_hDRMLPv7 as Net
+from vit_custom_model import Vit_consis_hDRMLPv2 as Net
 from torch.cuda.amp import autocast as autocast, GradScaler
 import math
 
@@ -135,10 +135,10 @@ def main(args):
     #     optimizer, T_max=n_epoch, eta_min=1e-10, last_epoch=-1, verbose=True)
     lr_scheduler = CosineAnnealingLRWarmup(optimizer,
                                            T_max=n_epoch,
-                                           eta_min=1.0e-8,
+                                           eta_min=1.0e-9,
                                            last_epoch=-1,
-                                           warmup_steps=3,
-                                           warmup_start_lr=1.0e-6)
+                                           warmup_steps=5,
+                                           warmup_start_lr=1.0e-8)
     last_loss = 99999
     scaler = GradScaler()
     now = datetime.now()
@@ -156,7 +156,7 @@ def main(args):
     last_auc = 0
     last_val_auc = 0
     weight_dict = {}
-    n_weight = 4
+    n_weight = 5
     # 添加针对loss最小的几组pth
     last_val_loss = 0
     weight_dict_loss = {}

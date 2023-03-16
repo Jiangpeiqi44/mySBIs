@@ -887,7 +887,6 @@ class HierarchicalMultiScaleRegionLayerv4(nn.Module):
         out = self.gelu(local_out) # 因为内部做了bn 这里直接gelu
         return out
 
-
 class LocalityFeedForward(nn.Module):
     def __init__(self, in_dim, out_dim, stride, expand_ratio=4., act='hs+se', reduction=4,
                  wo_dp_conv=False, dp_first=False):
@@ -994,7 +993,7 @@ class Attention(nn.Module):
         x = self.proj(x)
         x = self.proj_drop(x)
         return x
-    
+        
 class Mlp(nn.Module):
     """
     MLP as used in Vision Transformer, MLP-Mixer and related networks

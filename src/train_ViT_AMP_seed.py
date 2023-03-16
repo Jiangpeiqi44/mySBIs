@@ -8,7 +8,7 @@ import warnings
 # from utils.ibi_wavelet import SBI_Dataset
 # from utils.bi_wavelet import SBI_Dataset
 # from utils.sbi_default import SBI_Dataset
-from utils.MixBI_Map import SBI_Dataset
+from utils.MixBI import SBI_Dataset
 from utils.scheduler import LinearDecayLR
 from sklearn.metrics import confusion_matrix, roc_auc_score
 import argparse
@@ -16,7 +16,7 @@ from utils.logs import log
 from utils.funcs import load_json
 from datetime import datetime
 from tqdm import tqdm
-from vit_custom_model import Vit_consis_hDRMLPv2 as Net
+from vit_custom_model import Vit_hDRMLPv2 as Net
 from torch.cuda.amp import autocast as autocast, GradScaler
 import math
 
@@ -109,7 +109,7 @@ def main(args):
     pg = [p for p in model.parameters() if p.requires_grad]
     # optimizer = torch.optim.SGD(pg, lr=1e-3, momentum=0.9, weight_decay=5E-5)
     optimizer = torch.optim.AdamW(
-        pg, lr=6e-5, betas=(0.9, 0.999), weight_decay=0.3)  # 6e-5  3e-5  2e-5 wd默认1e-2
+        pg, lr=3e-5, betas=(0.9, 0.999), weight_decay=0.3)  # 6e-5  3e-5  2e-5 wd默认1e-2
     # optimizer = torch.optim.AdamW(
     #     model.parameters(), lr=2e-5, betas=(0.9, 0.999))
      ## add 载入已训练
@@ -137,8 +137,8 @@ def main(args):
                                            T_max=n_epoch,
                                            eta_min=1.0e-9,
                                            last_epoch=-1,
-                                           warmup_steps=3,
-                                           warmup_start_lr=1.0e-7)
+                                           warmup_steps=5,
+                                           warmup_start_lr=1.0e-8)
     last_loss = 99999
     scaler = GradScaler()
     now = datetime.now()
@@ -151,7 +151,7 @@ def main(args):
     logger = log(path=save_path+"logs/", file="losses.logs")
 
     criterion = nn.CrossEntropyLoss()
-    criterionMap = nn.BCEWithLogitsLoss() #nn.BCELoss()
+    # criterionMap = nn.BCEWithLogitsLoss() #nn.BCELoss()
     lbda = 2
     last_auc = 0
     last_val_auc = 0
@@ -170,13 +170,10 @@ def main(args):
         for step, data in enumerate(tqdm(train_loader)):
             img = data['img'].to(device, non_blocking=True).float()
             target = data['label'].to(device, non_blocking=True).long()
-            target_map = data['map'].to(device, non_blocking=True).float()
             optimizer.zero_grad()
             with autocast():
-                output, map = model(img)
-                loss_cls = criterion(output, target)
-                loss_map = criterionMap(map, target_map)
-                loss = loss_cls + lbda*loss_map
+                output = model(img)
+                loss = criterion(output, target)
             # loss.backward()
             # optimizer.step()
             scaler.scale(loss).backward()
@@ -208,10 +205,9 @@ def main(args):
         for step, data in enumerate(tqdm(val_loader)):
             img = data['img'].to(device, non_blocking=True).float()
             target = data['label'].to(device, non_blocking=True).long()
-            target_map = data['map'].to(device, non_blocking=True).float()
             with torch.no_grad():
                 with autocast():
-                    output, map = model(img)
+                    output = model(img)
                     loss = criterion(output, target)
             loss_value = loss.item()
             iter_loss.append(loss_value)

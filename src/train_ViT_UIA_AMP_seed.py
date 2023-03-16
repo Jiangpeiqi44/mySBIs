@@ -8,7 +8,7 @@ import warnings
 # from utils.ibi_wavelet import SBI_Dataset
 # from utils.bi_wavelet import SBI_Dataset
 # from utils.sbi_default import SBI_Dataset
-from utils.MixBI_Map import SBI_Dataset
+from utils.MixBI_UIA import SBI_Dataset
 from utils.scheduler import LinearDecayLR
 from sklearn.metrics import confusion_matrix, roc_auc_score
 import argparse
@@ -16,7 +16,7 @@ from utils.logs import log
 from utils.funcs import load_json
 from datetime import datetime
 from tqdm import tqdm
-from vit_custom_model import Vit_consis_hDRMLPv2 as Net
+from vit_uia_model import Vit_uia_hDRMLPv2 as Net
 from torch.cuda.amp import autocast as autocast, GradScaler
 import math
 

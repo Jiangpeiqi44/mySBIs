@@ -255,7 +255,7 @@ class SBI_Dataset(Dataset):
                 img_r = img_r.transpose((2, 0, 1))
 
                 # # 基于SSIM的一致性Map生成
-                # map_shape = 14  # 224/16 = 14
+                map_shape = 14  # 224/16 = 14
                 # ssim_patch = np.zeros((map_shape, map_shape))
                 # ssim_map = cv2.resize(
                 #     ssim_map, self.image_size, interpolation=cv2.INTER_LINEAR).astype('float32')
@@ -264,11 +264,11 @@ class SBI_Dataset(Dataset):
                 #         ssim_patch[i, j] = (
                 #             ssim_map[16*i:16*(i+1), 16*j:16*(j+1)]).mean()
 
-                # mask_f = cv2.resize(
-                #     mask, (map_shape, map_shape), interpolation=cv2.INTER_LINEAR).astype('float32')
+                mask_f = cv2.resize(
+                    mask, (map_shape, map_shape), interpolation=cv2.INTER_LINEAR).astype('float32')
 
-                # mask_r = np.ones((196, 196),dtype='float32')
-                # mask_f = self.Consistency2D(mask_f)  # ssim_patch，mask_f
+                mask_r = np.ones((196, 196),dtype='float32')
+                mask_f = self.Consistency2D(mask_f)  # ssim_patch，mask_f
 
                 flag = False
             except Exception as e:
@@ -277,7 +277,7 @@ class SBI_Dataset(Dataset):
                 # traceback.print_exc()
                 idx = torch.randint(low=0, high=len(self), size=(1,)).item()
 
-        return img_f, img_r
+        return img_f, img_r, mask_f, mask_r
 
     def Consistency2D(self, mask):
         real_mask = mask.flatten()  # shape like [1,196]
@@ -494,11 +494,13 @@ class SBI_Dataset(Dataset):
         return img, mask, landmark_new, bbox_new
 
     def collate_fn(self, batch):
-        img_f, img_r = zip(*batch)
+        img_f, img_r, mask_f, mask_r = zip(*batch)
         data = {}
         data['img'] = torch.cat(
             [torch.tensor(img_r).float(), torch.tensor(img_f).float()], 0)
         data['label'] = torch.tensor([0]*len(img_r)+[1]*len(img_f))
+        data['map'] = torch.cat(
+            [torch.tensor(mask_r).float(), torch.tensor(mask_f).float()], 0)
         return data
 
     def worker_init_fn(self, worker_id):

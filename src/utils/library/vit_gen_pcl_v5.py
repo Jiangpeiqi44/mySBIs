@@ -129,7 +129,7 @@ def colorTransfer(src, dst, mask):
 
 
 class BIOnlineGeneration():
-    def __init__(self):
+    def __init__(self, phase):
 
         # with open('src/utils/library/ff_lm.json', 'r') as f:
         with open('src/utils/library/ff_lm_{}.json'.format(phase), 'r') as f:

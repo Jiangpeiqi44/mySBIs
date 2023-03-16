@@ -131,7 +131,8 @@ def colorTransfer(src, dst, mask):
 class BIOnlineGeneration():
     def __init__(self):
 
-        with open('src/utils/library/ff_lm.json', 'r') as f:
+        # with open('src/utils/library/ff_lm.json', 'r') as f:
+        with open('src/utils/library/ff_lm_{}.json'.format(phase), 'r') as f:
             self.landmarks_record = json.load(f)
             self.data_list = []
             for k, v in self.landmarks_record.items():

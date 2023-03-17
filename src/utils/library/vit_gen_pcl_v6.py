@@ -229,8 +229,8 @@ class BIOnlineGeneration():
             #     if np.random.rand() < 0.1:
             #          x_ray_flag = True
 
-            if np.random.rand() < 0.5:
-            # if True:
+            # if np.random.rand() < 0.25:
+            if True:
                 foreground_face, background_face = resize_to_match(foreground_face, background_face)
                 match_flag = 0
             else:
@@ -253,15 +253,15 @@ class BIOnlineGeneration():
                 foreground_face = colorTransfer(
                     background_face, foreground_face, mask*255)
             elif self.stats == 'IBI':
-                # foreground_face = colorTransfer(
-                #     background_face, foreground_face, mask*255)     
-                if np.random.rand() < 0.2:
+                foreground_face = colorTransfer(
+                    background_face, foreground_face, mask*255)     
+                if np.random.rand() < 0.15:
                     '''不增强and不blur 直接模拟边界'''
                     self.not_aug_flag = True
                     if np.random.rand() < 0.5:
                         blur_flag = False
-                elif np.random.rand() < 0.1:
-                    x_ray_flag = True
+                # elif np.random.rand() < 0.15:
+                #     x_ray_flag = True
                 #
             # ## 添加STG 如果是IBI有概率触发不增强，仅保留混合边界
             if not self.not_aug_flag:

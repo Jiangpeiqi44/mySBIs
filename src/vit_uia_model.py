@@ -560,7 +560,7 @@ def _init_vit_weights(m):
         nn.init.ones_(m.weight)
         
 def vit_base_patch16_224_in21k_uia(num_classes: int = 21843, has_logits: bool = True, isEmbed: bool = True, drop_ratio: float = 0.,
-                                           attn_drop_ratio: float = 0., drop_path_ratio: float = 0., keepEmbedWeight: bool = True):
+                                           attn_drop_ratio: float = 0., drop_path_ratio: float = 0., keepEmbedWeight: bool = True,  attn_list: list = [8,9,10,11]):
     model = VisionTransformer_uia(img_size=224,
                                           patch_size=16,
                                           embed_dim=768,
@@ -570,7 +570,8 @@ def vit_base_patch16_224_in21k_uia(num_classes: int = 21843, has_logits: bool = 
                                           attn_drop_ratio=attn_drop_ratio,
                                           drop_path_ratio=drop_path_ratio,
                                           representation_size=768 if has_logits else None,
-                                          num_classes=num_classes, isEmbed=isEmbed)
+                                          num_classes=num_classes, isEmbed=isEmbed,
+                                          attn_list=attn_list)
     if not keepEmbedWeight:
         del model.patch_embed
     weight_pth = 'src/jx_vit_base_patch16_224_in21k-e5005f0a.pth'
@@ -700,6 +701,23 @@ class Vit_UIA_hDRMLPv2(nn.Module):
         # consis_map_norm = torch.norm(patch_token, p=2, dim=2, keepdim=True)
         # consis_map = 0.5 + 0.5*((self.K(patch_token) @ self.Q(patch_token).transpose(-2, -1)) / (consis_map_norm@consis_map_norm.transpose(-2, -1)))
         return cls_token, consis_map
+
+    def test_time(self, x):
+        x = self.custom_embed(x)
+        cls_token, patch_token = self.vit_model(x)
+        return cls_token
+
+class Vit_UIAv2_hDRMLPv2(nn.Module):
+    def __init__(self, weight_pth=None):
+        super().__init__()
+        self.vit_model = vit_base_patch16_224_in21k_uia(
+            num_classes=2, has_logits=False, isEmbed=False, keepEmbedWeight=False,attn_list=[7,8,9,10,11])
+        self.custom_embed = hDRMLPv2_embed(weight_pth)
+
+    def forward(self, x):
+        x = self.custom_embed(x)
+        cls_token, patch_token = self.vit_model(x)
+        return cls_token
 
     def test_time(self, x):
         x = self.custom_embed(x)

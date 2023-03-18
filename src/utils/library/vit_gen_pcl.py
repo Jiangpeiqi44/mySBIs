@@ -30,7 +30,7 @@ def name_resolve(path):
 
 
 def total_euclidean_distance(a, b):
-    # assert len(a.shape) == 2
+    assert len(a.shape) == 2
     return np.sum(np.linalg.norm(a-b, axis=1))
 
 
@@ -126,7 +126,8 @@ def colorTransfer(src, dst, mask):
     transferredDst[maskIndices[0], maskIndices[1]] = maskedDst
 
     return transferredDst
-    
+
+
 class BIOnlineGeneration():
     def __init__(self, phase):
 
@@ -163,8 +164,8 @@ class BIOnlineGeneration():
             self.phase = phase
 
         face_img, mask_bi, mask = self.get_blended_face(background_face_path)
-        if self.not_aug_flag:
-            mask = (1 - mask) * mask * 4
+        # if self.not_aug_flag:
+        #     mask = (1 - mask) * mask * 4
 
         return face_img, mask_bi, mask
 
@@ -185,7 +186,7 @@ class BIOnlineGeneration():
         foreground_face = io.imread(foreground_face_path)
         foreground_landmark_abs = reorder_landmark(np.load(
             foreground_face_path.replace('/frames/', '/landmarks/').replace('png', 'npy'))[0])
-        foreground_face, foreground_landmark_abs, __, ___ = crop_face(
+        foreground_face, _, __, ___ = crop_face(
             foreground_face, foreground_landmark_abs, margin=True, crop_by_bbox=False)
 
         # ## get random type of initial blending mask
@@ -196,6 +197,7 @@ class BIOnlineGeneration():
         if True:
         # if np.random.rand() < 0.5:
             mask = random_get_hull(background_landmark, background_face)
+
             # ## random deform mask
             mask = self.elastic(image=mask)['image']
             mask = random_erode_dilate(mask)
@@ -214,6 +216,18 @@ class BIOnlineGeneration():
                 # if np.random.rand() < 0.25:
                 #     isBIBlend = True
 
+            if isDownScale:
+                    h, w, c = background_face.shape
+                    ori_size = (w, h)
+                    size_down = random.randint(128, 317)
+                    aug_size = (size_down, size_down)
+                    background_face = cv2.resize(
+                        background_face, aug_size, interpolation=cv2.INTER_LINEAR).astype('uint8')
+                    foreground_face = cv2.resize(
+                        foreground_face, aug_size, interpolation=cv2.INTER_LINEAR).astype('uint8')
+                    mask = cv2.resize(
+                        mask, aug_size, interpolation=cv2.INTER_LINEAR).astype('float32')
+
             # ## apply color transfer
             if self.stats == 'BI':
                 foreground_face = colorTransfer(
@@ -222,7 +236,7 @@ class BIOnlineGeneration():
                 if np.random.rand() < 0.5:
                     foreground_face = colorTransfer(
                         background_face, foreground_face, mask*255)
-                if np.random.rand() < 0.35:
+                if np.random.rand() < 0.5:
                     self.not_aug_flag = True
                 if np.random.rand() < 0.5:
                     blur_flag = False
@@ -236,17 +250,6 @@ class BIOnlineGeneration():
                     background_face = self.source_transforms(
                         image=background_face.astype(np.uint8))['image']
             # ## blend two face  小波 or 默认方法
-
-            if isDownScale:
-                h, w, c = background_face.shape
-                ori_size = (w, h)
-                size_down = random.randint(128, 317)
-                aug_size = (size_down, size_down)
-                background_face = cv2.resize(
-                    background_face, aug_size, interpolation=cv2.INTER_LINEAR).astype('uint8')
-                foreground_face = cv2.resize(
-                    foreground_face, aug_size, interpolation=cv2.INTER_LINEAR).astype('uint8')
-                mask = cv2.resize(mask, aug_size, interpolation=cv2.INTER_LINEAR).astype('float32')
 
             if isBIBlend:
                 blended_face, mask = blendImages(
@@ -265,12 +268,8 @@ class BIOnlineGeneration():
                 else:
                     # if np.random.rand() < 0.5:
                     if True:
-                        if np.random.rand() < 0.75:
-                            blended_face, mask = dynamic_blend(
-                                foreground_face, background_face, mask[:, :, 0])
-                        else:
-                            blended_face, mask = possion_blend(
-                                foreground_face, background_face, mask)
+                        blended_face, mask = dynamic_blend(
+                            foreground_face, background_face, mask[:, :, 0])
                     else:
                         blended_face, mask = dynamic_blend_align(
                             foreground_face, background_face, mask[:, :, 0])
@@ -331,7 +330,7 @@ class BIOnlineGeneration():
             all_candidate_path = filter(
                 lambda k: k != background_face_path, all_candidate_path)
             all_candidate_path = list(all_candidate_path)
-            all_candidate_path = random.sample(all_candidate_path, k=5)
+            all_candidate_path = random.sample(all_candidate_path, k=4)
             all_candidate_path = ['{}_{}'.format(
                 vid_id, os.path.basename(i)) for i in all_candidate_path]
         else:
@@ -459,16 +458,14 @@ class RandomDownScale(alb.core.transforms_interface.ImageOnlyTransform):
 
 
 def dynamic_blend(source, target, mask, blend_ratio=None, blur_flag=True):
-    if source.shape != target.shape:
-        h, w, c = target.shape
-        source = cv2.resize(
-            source, (w, h), interpolation=cv2.INTER_LINEAR).astype('uint8')
-        # mask = cv2.resize(
-        #     mask, (w, h), interpolation=cv2.INTER_LINEAR).astype('float32')
     if blur_flag:
         mask_blured = get_blend_mask(mask)
     else:
         mask_blured = mask.reshape((mask.shape+(1,)))
+    if source.shape != target.shape:
+        h, w, c = target.shape
+        source = cv2.resize(
+            source, (w, h), interpolation=cv2.INTER_LINEAR).astype('uint8')
     if blend_ratio == None:
         blend_list = [0.25, 0.5, 0.75, 1, 1, 1]
         blend_ratio = blend_list[np.random.randint(len(blend_list))]
@@ -480,17 +477,11 @@ def dynamic_blend(source, target, mask, blend_ratio=None, blur_flag=True):
         mask_blured_ret = get_blend_mask(mask)*blend_ratio
     return img_blended, mask_blured_ret
 
-def possion_blend(source, target, mask):
-    x, y, w, h = cv2.boundingRect((mask[:,:,0]*255).astype(np.uint8))
-    center = (x+w//2, y+h//2)
-    img_blended = cv2.seamlessClone(source, target, (mask*255).astype(np.uint8), center, cv2.NORMAL_CLONE)
-    return img_blended, get_blend_mask(mask[:,:,0])
-    
+
 def dynamic_blend_align(source, target, mask, blend_ratio=None, blur_flag=True):
     # source 前景  target背景 mask与target对应
     slice_flag = False
     if source.shape != target.shape:
-        slice_flag = True
         # 这里进行对齐，而不是直接reshape
         h1, w1, _ = target.shape
         h2, w2, _ = source.shape

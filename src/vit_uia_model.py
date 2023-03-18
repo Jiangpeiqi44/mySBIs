@@ -685,7 +685,7 @@ class Vit_UIA_hDRMLPv2(nn.Module):
     def __init__(self, weight_pth=None):
         super().__init__()
         self.vit_model = vit_base_patch16_224_in21k_uia(
-            num_classes=2, has_logits=False, isEmbed=False, keepEmbedWeight=False)
+            num_classes=2, has_logits=False, isEmbed=False, keepEmbedWeight=False, attn_list=[9,10,11])
         self.custom_embed = hDRMLPv2_embed(weight_pth)
         # consis-1
         self.K = nn.Linear(768, 768)

@@ -126,28 +126,6 @@ def colorTransfer(src, dst, mask):
     transferredDst[maskIndices[0], maskIndices[1]] = maskedDst
 
     return transferredDst
-
-def randaffine(img, mask):
-        f = alb.Affine(
-            translate_percent={'x': (-0.03, 0.03), 'y': (-0.015, 0.015)},
-            scale=[0.95, 1/0.95],
-            fit_output=False,
-            p=1)
-
-        g = alb.ElasticTransform(
-            alpha=50,
-            sigma=7,
-            alpha_affine=0,
-            p=1,
-        )
-
-        transformed = f(image=img, mask=mask)
-        img = transformed['image']
-
-        mask = transformed['mask']
-        transformed = g(image=img, mask=mask)
-        mask = transformed['mask']
-        return img, mask
     
 class BIOnlineGeneration():
     def __init__(self, phase):
@@ -217,12 +195,11 @@ class BIOnlineGeneration():
         # 全脸Mask
         if True:
         # if np.random.rand() < 0.5:
-            if np.random.rand() < 0.5:
-                mask = random_get_hull(background_landmark, background_face)
-                mask_who_flag = 0
-            else:
-                mask = random_get_hull(foreground_landmark_abs, foreground_face)
-                mask_who_flag = 1
+            mask = random_get_hull(background_landmark, background_face)
+            # ## random deform mask
+            mask = self.elastic(image=mask)['image']
+            mask = random_erode_dilate(mask)
+            mask_bi = mask.copy()
             # ## filte empty mask after deformation
             if np.sum(mask) == 0:
                 raise NotImplementedError
@@ -241,21 +218,11 @@ class BIOnlineGeneration():
             if self.stats == 'BI':
                 foreground_face = colorTransfer(
                     background_face, foreground_face, mask*255)
-                # ## random deform mask
-                mask = self.elastic(image=mask)['image']
-                mask = random_erode_dilate(mask)
-                mask_bi = mask.copy()
             elif self.stats == 'IBI':
-                foreground_face = colorTransfer(
-                    background_face, foreground_face, mask*255)
-                # 这里使用SBI的affine方法
-                if mask_who_flag == 0:
-                    background_face, mask = randaffine(background_face, mask)
-                else:
-                    foreground_face, mask = randaffine(foreground_face, mask)
-                
-                mask_bi = mask.copy()
-                if np.random.rand() < 0.25:
+                if np.random.rand() < 0.5:
+                    foreground_face = colorTransfer(
+                        background_face, foreground_face, mask*255)
+                if np.random.rand() < 0.35:
                     self.not_aug_flag = True
                 if np.random.rand() < 0.5:
                     blur_flag = False
@@ -352,7 +319,7 @@ class BIOnlineGeneration():
         min_dist = 99999999
         if self.stats == 'BI':
             # random sample 5000 frame from all frams:
-            all_candidate_path = random.sample(self.data_list, k=2000)
+            all_candidate_path = random.sample(self.data_list, k=2500)
 
             # filter all frame that comes from the same video as background face
             all_candidate_path = filter(lambda k: name_resolve(k)[
@@ -364,7 +331,7 @@ class BIOnlineGeneration():
             all_candidate_path = filter(
                 lambda k: k != background_face_path, all_candidate_path)
             all_candidate_path = list(all_candidate_path)
-            all_candidate_path = random.sample(all_candidate_path, k=4)
+            all_candidate_path = random.sample(all_candidate_path, k=5)
             all_candidate_path = ['{}_{}'.format(
                 vid_id, os.path.basename(i)) for i in all_candidate_path]
         else:
@@ -390,7 +357,7 @@ class BIOnlineGeneration():
                     brightness_limit=(-0.1, 0.1), contrast_limit=(-0.1, 0.1), p=1),
                 # 添加额外的增强
                 # alb.RandomToneCurve (scale=0.01, p=0.1),
-                alb.ImageCompression(quality_lower=80, quality_upper=100, p=0.1),
+                # alb.ImageCompression(quality_lower=80, quality_upper=100, p=0.1),
             ], p=1),
 
             alb.OneOf([
@@ -496,8 +463,8 @@ def dynamic_blend(source, target, mask, blend_ratio=None, blur_flag=True):
         h, w, c = target.shape
         source = cv2.resize(
             source, (w, h), interpolation=cv2.INTER_LINEAR).astype('uint8')
-        mask = cv2.resize(
-            mask, (w, h), interpolation=cv2.INTER_LINEAR).astype('float32')
+        # mask = cv2.resize(
+        #     mask, (w, h), interpolation=cv2.INTER_LINEAR).astype('float32')
     if blur_flag:
         mask_blured = get_blend_mask(mask)
     else:

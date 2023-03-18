@@ -66,7 +66,7 @@ class SBI_Dataset(Dataset):
         while flag:
             try:
                 filename = self.image_list[idx]
-                if np.random.rand() < 0.75:
+                if np.random.rand() < 0.8:
                 # if False:
                     # IBI与BI进行整合
 
@@ -89,7 +89,7 @@ class SBI_Dataset(Dataset):
                     landmark_bi = self.reorder_landmark(landmark_bi)
                     # # 通过IBI或BI方法混合
                     logging.disable(logging.FATAL)
-                    if np.random.rand() < 0.75:
+                    if np.random.rand() < 0.6:
                     # if True:
                         # # BI方法
                         self.bi.stats = 'BI'

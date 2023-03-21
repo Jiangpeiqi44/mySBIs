@@ -208,10 +208,9 @@ def main(args):
         for step, data in enumerate(tqdm(val_loader)):
             img = data['img'].to(device, non_blocking=True).float()
             target = data['label'].to(device, non_blocking=True).long()
-            target_map = data['map'].to(device, non_blocking=True).float()
             with torch.no_grad():
                 with autocast():
-                    output, map = model(img)
+                    output = model.test_time(img)
                     loss = criterion(output, target)
             loss_value = loss.item()
             iter_loss.append(loss_value)

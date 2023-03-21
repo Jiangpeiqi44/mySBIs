@@ -594,7 +594,6 @@ class VisionTransformer_uia_v2(nn.Module):
         # Classifier head(s)
         # self.head = nn.Linear(
         #     self.num_features, num_classes) if num_classes > 0 else nn.Identity()
-        self.head_drop = nn.Dropout(p=0.1)
         self.head = nn.Linear(embed_dim*2, num_classes) if num_classes > 0 else nn.Identity()
         self.head_dist = None
         if distilled:
@@ -654,12 +653,12 @@ class VisionTransformer_uia_v2(nn.Module):
             # patch token [B, 196, 768]
             B, PP, C = patch_token.shape
             attn_qk_map_avg = torch.mean(attn_block, dim=1, keepdim=True)
-            attn_patch_qk_map = attn_qk_map_avg[:, :, 1:, 1:].squeeze(1).contiguous() # 计算平均patch token之间的qk map [B,196,196]
+            attn_patch_qk_map = attn_qk_map_avg[:, :, 1:, 1:].squeeze(1) # 计算平均patch token之间的qk map [B,196,196]
             attn_cls_qk_map = attn_qk_map_avg[:, :, 0, 1:]
             localization_map = torch.softmax(attn_cls_qk_map, dim=-1) # 计算CLS和其它token的平均attn map [B,1,196]
             # localization_map = localization_map.reshape(B,1,PP) #.to(patch_token.device)
-            x = torch.cat([x, torch.bmm(localization_map, patch_token).squeeze(1).contiguous()], -1) 
-            x = self.head(self.head_drop(x))
+            x = torch.cat([x, torch.bmm(localization_map, patch_token).squeeze(1)], -1) 
+            x = self.head(x)
         return x, attn_patch_qk_map
     
 def _init_vit_weights(m):

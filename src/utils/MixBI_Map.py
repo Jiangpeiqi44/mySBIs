@@ -258,14 +258,14 @@ class SBI_Dataset(Dataset):
                 map_shape = 14  # 224/16 = 14
                 # ssim_patch = np.zeros((map_shape, map_shape))
                 # ssim_map = cv2.resize(
-                #     ssim_map, self.image_size, interpolation=cv2.INTER_LINEAR).astype('float32')
+                #     ssim_map, self.image_size, interpolation=cv2.INTER_AREA).astype('float32')
                 # for i in range(map_shape):
                 #     for j in range(map_shape):
                 #         ssim_patch[i, j] = (
                 #             ssim_map[16*i:16*(i+1), 16*j:16*(j+1)]).mean()
 
                 mask_f = cv2.resize(
-                    mask, (map_shape, map_shape), interpolation=cv2.INTER_LINEAR).astype('float32')
+                    mask, (map_shape, map_shape), interpolation=cv2.INTER_AREA).astype('float32')
 
                 mask_r = np.ones((196, 196),dtype='float32')
                 mask_f = self.Consistency2D(mask_f)  # ssim_patch，mask_f

@@ -1,690 +1,894 @@
-# Created by: Kaede Shiohara
-# Yamasaki Lab at The University of Tokyo
-# shiohara@cvm.t.u-tokyo.ac.jp
-# Copyright (c) 2021
-# 3rd party softwares' licenses are noticed at https://github.com/mapooon/SelfBlendedImages/blob/master/LICENSE
-import torch.nn.functional as F
-import logging
-import math
+from functools import partial
+from collections import OrderedDict
 import torch
-from torchvision import datasets, transforms, utils
-from torch.utils.data import Dataset, IterableDataset
-from scipy.ndimage import binary_erosion, binary_dilation
-from glob import glob
-import os
-import numpy as np
-from PIL import Image
-import random
-import cv2
-from torch import nn
-import sys
-import albumentations as alb
-from skimage.transform import PiecewiseAffineTransform, warp
-from skimage.metrics import structural_similarity as compare_ssim
-import warnings
-import traceback
-warnings.filterwarnings('ignore')
+import torch.nn as nn
+import math
 
-# win version ?
-if os.path.isfile('src/utils/library/vit_gen_pcl.py'):
-    sys.path.append(
-        'src/utils/library/')
-    print('exist library')
-    exist_bi = True
-else:
-    exist_bi = False
+def drop_path(x, drop_prob: float = 0., training: bool = False):
+    if drop_prob == 0. or not training:
+        return x
+    keep_prob = 1 - drop_prob
+    # work with diff dim tensors, not just 2D ConvNets
+    shape = (x.shape[0],) + (1,) * (x.ndim - 1)
+    random_tensor = keep_prob + \
+        torch.rand(shape, dtype=x.dtype, device=x.device)
+    random_tensor.floor_()  # binarize
+    output = x.div(keep_prob) * random_tensor
+    return output
 
+class DropPath(nn.Module):
+    """
+    Drop paths (Stochastic Depth) per sample  (when applied in main path of residual blocks).
+    """
 
-class SBI_Dataset(Dataset):
-    def __init__(self, phase='train', image_size=224, n_frames=8):
+    def __init__(self, drop_prob=None):
+        super(DropPath, self).__init__()
+        self.drop_prob = drop_prob
 
-        assert phase in ['train', 'val', 'test']
+    def forward(self, x):
+        return drop_path(x, self.drop_prob, self.training)
 
-        image_list, label_list = init_ff(phase, 'frame', n_frames=n_frames)
+class PatchEmbed(nn.Module):
+    """
+    2D Image to Patch Embedding
+    """
+    def __init__(self, img_size=224, patch_size=16, in_c=3, embed_dim=768, norm_layer=None):
+        super().__init__()
+        img_size = (img_size, img_size)
+        patch_size = (patch_size, patch_size)
+        self.img_size = img_size
+        self.patch_size = patch_size
+        self.grid_size = (img_size[0] // patch_size[0],
+                          img_size[1] // patch_size[1])
+        self.num_patches = self.grid_size[0] * self.grid_size[1]
 
-        path_lm = '/landmarks/'
-        label_list = [label_list[i] for i in range(len(image_list)) if os.path.isfile(image_list[i].replace(
-            '/frames/', path_lm).replace('.png', '.npy')) and os.path.isfile(image_list[i].replace('/frames/', '/retina/').replace('.png', '.npy'))]
-        image_list = [image_list[i] for i in range(len(image_list)) if os.path.isfile(image_list[i].replace(
-            '/frames/', path_lm).replace('.png', '.npy')) and os.path.isfile(image_list[i].replace('/frames/', '/retina/').replace('.png', '.npy'))]
-        self.path_lm = path_lm
-        print(f'SBI({phase}): {len(image_list)}')
+        self.proj = nn.Conv2d(
+            in_c, embed_dim, kernel_size=patch_size, stride=patch_size)
+        self.norm = norm_layer(embed_dim) if norm_layer else nn.Identity()
 
-        self.image_list = image_list
-        self.bi = BIOnlineGeneration(phase=phase)
-        self.image_size = (image_size, image_size)
-        self.phase = phase
-        self.n_frames = n_frames
-        self.transforms = self.get_transforms()
-        self.source_transforms = self.get_source_transforms()
+    def forward(self, x):
+        B, C, H, W = x.shape
+        assert H == self.img_size[0] and W == self.img_size[1], \
+            f"Input image size ({H}*{W}) doesn't match model ({self.img_size[0]}*{self.img_size[1]})."
 
-    def __len__(self):
-        return len(self.image_list)
+        # flatten: [B, C, H, W] -> [B, C, HW]
+        # transpose: [B, C, HW] -> [B, HW, C]
+        x = self.proj(x).flatten(2).transpose(1, 2)
+        x = self.norm(x)
+        return x
 
-    def __getitem__(self, idx):
-        flag = True
-        while flag:
-            try:
-                filename = self.image_list[idx]
-                if np.random.rand() < 0.75:
-                # if False:
-                    # IBI与BI进行整合
+class hDRMLPv2Embed(nn.Module):
+    def __init__(self, img_size=(224, 224), patch_size=(16, 16), in_chans=3, embed_dim=768, norm_layer=nn.BatchNorm2d):
+        super().__init__()
+        num_patches = (img_size[1] // patch_size[1]) * (img_size[0] // patch_size[0])
+        self.img_size = img_size
+        self.patch_size = patch_size
+        self.num_patches = num_patches
+        self.hproj = torch.nn.Sequential(
+            *[
+              nn.Conv2d(in_chans, embed_dim//16, kernel_size=3, stride=1, padding=1, bias=False), # [768,224,224] -> [768//16,224,224]
+              norm_layer(embed_dim//16),  # 这里采用BN，也可以采用LN
+              nn.GELU(),
+              
+              RegionLayerDW(embed_dim//16, embed_dim//16, (7,7)), #[768//16,224,224] -> [768//16,224,224]
+              nn.GELU(),
+              
+              nn.Conv2d(embed_dim//16, embed_dim//4, kernel_size=4, stride=4, bias=False), # [768//16,224,224] -> [768//4,56,56]
+              norm_layer(embed_dim//4),  # 这里采用BN，也可以采用LN
+              nn.GELU(),
+              
+              nn.Conv2d(embed_dim//4, embed_dim//4, kernel_size=2, stride=2, bias=False), # [768//4,56,56] -> [768//4,28,28]
+              norm_layer(embed_dim//4),
+              nn.GELU(),
+              
+              nn.Conv2d(embed_dim//4, embed_dim, kernel_size=2, stride=2, bias=False),  # [768//4,28,28] -> [768,14,14]
+              norm_layer(embed_dim),
+              ])
+        
+    def forward(self, x):
+        x = self.hproj(x).flatten(2).transpose(1, 2)
+        return x
+        
+class RegionLayerDW(nn.Module):
+    def __init__(self, in_channels, out_channels, grid=(8, 8)):
+        super(RegionLayerDW, self).__init__()
 
-                    # # 读取做背景图片的lm和bbox
-                    background_face_path = filename
-                    img_bi_r = np.array(Image.open(background_face_path))
-                    landmark_bi = np.load(background_face_path.replace(
-                        '.png', '.npy').replace('/frames/', self.path_lm))[0]
-                    bbox_lm_bi = np.array([landmark_bi[:, 0].min(), landmark_bi[:, 1].min(
-                    ), landmark_bi[:, 0].max(), landmark_bi[:, 1].max()])
-                    bboxes_bi = np.load(background_face_path.replace(
-                        '.png', '.npy').replace('/frames/', '/retina/'))[:2]
-                    iou_max = -1
-                    for i in range(len(bboxes_bi)):
-                        iou = IoUfrom2bboxes(
-                            bbox_lm_bi, bboxes_bi[i].flatten())
-                        if iou_max < iou:
-                            bbox_bi = bboxes_bi[i]
-                            iou_max = iou
-                    landmark_bi = self.reorder_landmark(landmark_bi)
-                    # # 通过IBI或BI方法混合
-                    logging.disable(logging.FATAL)
-                    if np.random.rand() < 0.75:
-                    # if True:
-                        # # BI方法
-                        self.bi.stats = 'BI'
-                    else:
-                        # # IBI方法
-                        self.bi.stats = 'IBI'
-                             # 获取IBI的目录
-                        # idt_dir = glob(filename[:-7]+'*')
-                        idt_dir = glob(filename[0:filename.rfind('/')+1]+'*')
-                        # windows的bug
-                        # idt_dir = [i.replace('\\', '/') for i in idt_dir]
-                        idt_dir = [idt_dir[i] for i in range(len(idt_dir)) if os.path.isfile(idt_dir[i].replace(
-                            '/frames/', self.path_lm).replace('.png', '.npy')) and os.path.isfile(idt_dir[i].replace('/frames/', '/retina/').replace('.png', '.npy'))]
-                        self.bi.ibi_data_list = idt_dir
-                    # # 生成
-                    # print(filename)
-                    img_bi_f, mask_bi, mask = self.bi.gen_one_datapoint(
-                        filename, landmark_bi)
+        self.in_channels = in_channels
+        self.out_channels = out_channels
+        self.grid = grid
 
-                    logging.disable(logging.NOTSET)
-                    if self.phase == 'train':
-                        if np.random.rand() < 0.5:
-                            img_bi_r, _, landmark_bi, bbox_bi = self.hflip(
-                                img_bi_r, None, landmark_bi, bbox_bi)
-                            img_bi_f, _, _, _ = self.hflip(
-                                img_bi_f, None, landmark_bi, bbox_bi)
-                            mask, _, _, _ = self.hflip(
-                                mask, None, landmark_bi, bbox_bi)
-                            mask_bi, _, _, _ = self.hflip(
-                                mask_bi, None, landmark_bi, bbox_bi)
+        self.region_layers = dict()
 
-                    img_bi_r, landmark_bi, bbox_bi, _, y0_new_bi, y1_new_bi, x0_new_bi, x1_new_bi = crop_face(
-                        img_bi_r, landmark_bi, bbox_bi, margin=True, crop_by_bbox=False, abs_coord=True)
+        for i in range(self.grid[0]):
+            for j in range(self.grid[1]):
+                module_name = 'region_conv_%d_%d' % (i, j)
+                # # Conv + BN + ReLu
+                self.region_layers[module_name] = nn.Sequential(
+                    nn.Conv2d(in_channels=self.in_channels, out_channels=self.in_channels,
+                              kernel_size=3, stride=1, padding=1, groups=self.in_channels, bias=False),
+                    nn.BatchNorm2d(self.in_channels),
+                    nn.GELU(),
+                    nn.Conv2d(in_channels=self.in_channels, out_channels=self.out_channels,kernel_size=1, stride=1 ,bias=False),
+                    nn.BatchNorm2d(self.out_channels),
+                )
+                # #
+                self.add_module(name=module_name,
+                                module=self.region_layers[module_name])
 
-                    img_r, landmark_last, __, ___, y0_new_bi, y1_new_bi, x0_new_bi, x1_new_bi = crop_face(
-                        img_bi_r, landmark_bi, bbox_bi, margin=False, crop_by_bbox=True, abs_coord=True, phase=self.phase)
+    def forward(self, x):
+        batch_size, _, height, width = x.size()
 
-                    img_f = img_bi_f[y0_new_bi:y1_new_bi, x0_new_bi:x1_new_bi]
-                    mask_bi = mask_bi[y0_new_bi:y1_new_bi, x0_new_bi:x1_new_bi]
-                    mask = mask[y0_new_bi:y1_new_bi, x0_new_bi:x1_new_bi]
+        input_row_list = torch.split(
+            x, split_size_or_sections=height//self.grid[0], dim=2)
+        output_row_list = []
 
-                    if self.phase == 'train':
-                        transformed = self.transforms(image=img_f.astype(
-                            'uint8'), image1=img_r.astype('uint8'))
-                        img_f = transformed['image']
-                        img_r = transformed['image1']
-                
-                else:               
-                    # # SBI
-                    img = np.array(Image.open(filename))
-                    landmark = np.load(filename.replace(
-                        '.png', '.npy').replace('/frames/', self.path_lm))[0]
-                    bbox_lm = np.array([landmark[:, 0].min(), landmark[:, 1].min(
-                    ), landmark[:, 0].max(), landmark[:, 1].max()])
-                    bboxes = np.load(filename.replace(
-                        '.png', '.npy').replace('/frames/', '/retina/'))[:2]
-                    iou_max = -1
-                    for i in range(len(bboxes)):
-                        iou = IoUfrom2bboxes(bbox_lm, bboxes[i].flatten())
-                        if iou_max < iou:
-                            bbox = bboxes[i]
-                            iou_max = iou
+        for i, row in enumerate(input_row_list):
+            input_grid_list_of_a_row = torch.split(
+                row, split_size_or_sections=width//self.grid[1], dim=3)
+            output_grid_list_of_a_row = []
 
-                    landmark = self.reorder_landmark(landmark)
-                    if self.phase == 'train':
-                        if np.random.rand() < 0.5:
-                            img, _, landmark, bbox = self.hflip(
-                                img, None, landmark, bbox)
+            for j, grid in enumerate(input_grid_list_of_a_row):
+                module_name = 'region_conv_%d_%d' % (i, j)
+                grid = self.region_layers[module_name](grid.contiguous()) + grid
+                output_grid_list_of_a_row.append(grid)
 
-                    # ## 由此得到裁剪后的img landmark bbox
-                    img, landmark, bbox, __ = crop_face(
-                        img, landmark, bbox, margin=True, crop_by_bbox=False)
+            output_row = torch.cat(output_grid_list_of_a_row, dim=3)
+            output_row_list.append(output_row)
 
-                    img_r, img_f, mask_bi, mask = self.self_blending(
-                        img.copy(), landmark.copy())
+        output = torch.cat(output_row_list, dim=2)
 
-                    if self.phase == 'train':
-                        transformed = self.transforms(image=img_f.astype(
-                            'uint8'), image1=img_r.astype('uint8'))
-                        img_f = transformed['image']
-                        img_r = transformed['image1']
-
-                    img_f, landmark_last, __, ___, y0_new, y1_new, x0_new, x1_new = crop_face(
-                        img_f, landmark, bbox, margin=False, crop_by_bbox=True, abs_coord=True, phase=self.phase)
-
-                    img_r = img_r[y0_new:y1_new, x0_new:x1_new]
-                    mask = mask[y0_new:y1_new, x0_new:x1_new]
-                    mask_bi = mask_bi[y0_new:y1_new, x0_new:x1_new]
-                    
-
-                
-                # if self.phase == 'train' and np.random.rand() < 0.5:
-                if False:
-                    # ## 进行基于SSIM的动态增强
-                    ssim_score, ssim_map = compare_ssim(
-                    img_r, img_f, data_range=255, channel_axis=2, full=True)
-                    ssim_map = ssim_map.mean(axis=2)
-                    landmark = landmark_last
-                    mask_area = np.sum(mask_bi > 0)
-                    area_thresh = 0.5
-                    # ##随机选择 landmarks
-                    sample_times = 50
-                    mask_cut_T1 = np.zeros_like(img_r[:, :, 0])
-
-                    group_num = np.random.randint(1, 4)
-                    for k in range(group_num):
-                        choose_landmark_idx = []
-                        for i in range(sample_times):
-                            rand_len = np.random.randint(7, 28)
-                            step = np.random.randint(1, 3)
-                            rand_start_idx = np.random.randint(
-                                0, len(landmark)-rand_len)
-                            landmark_idx = list(
-                                range(rand_start_idx, rand_start_idx + rand_len, step))
-                            if np.random.rand() < 0.5:
-                                landmark_idx = len(landmark) - \
-                                    np.array(landmark_idx) - 1
-                            choose_landmark_idx.append(landmark_idx)
-                        choose_landmark = []
-                        ssim = []
-                        for idx in choose_landmark_idx:
-                            choose_landmark.append(
-                                np.array([landmark[i] for i in idx]))
-                        for landmark_for_cut in choose_landmark:
-                            mask_cut_iter = np.zeros_like(img_r[:, :, 0])
-                            cv2.fillConvexPoly(
-                                mask_cut_iter, cv2.convexHull(landmark_for_cut), 1.)
-                            # ## 使用Map对应均值求SSIM
-                            ssim_cut = (ssim_map*mask_cut_iter).sum() / \
-                                np.sum(mask_cut_iter == 1)
-                            # print(ssim_old,ssim_cut)
-                            ssim.append(ssim_cut)
-                        ssim_max_id = np.argmax(ssim)
-                        cv2.fillConvexPoly(mask_cut_T1, cv2.convexHull(
-                            choose_landmark[ssim_max_id]), 1.)
-
-                    mask_cut_T1 = mask_cut_T1.reshape(mask_cut_T1.shape+(1,))
-                    # 判断覆盖面积 v2
-                    T1_area = np.sum(mask_cut_T1*mask_bi > 0)
-                    # print(T1_area, mask_area)
-                    T1_flag = bool((T1_area/mask_area) < area_thresh)
-                    if T1_flag:
-                        rand_pixel = np.random.randint(
-                            0, 255, img_r.shape)  # (H,W,3)
-                        img_f = img_f * (1 - mask_cut_T1) + \
-                            rand_pixel * mask_cut_T1
-                        rand_pixel = np.random.randint(
-                            0, 255, img_r.shape)  # (H,W,3)
-                        img_r = img_r * (1 - mask_cut_T1) + \
-                            rand_pixel * mask_cut_T1
-                        img_f = img_f.astype(np.uint8)
-                        img_r = img_r.astype(np.uint8)
-                    # else:
-                    #     print('Mask Too Big...')
-                # # 完成合成操作，开始后处理
-                # # resize操作
-                img_f = cv2.resize(
-                    img_f, self.image_size, interpolation=cv2.INTER_LINEAR).astype('float32')/255
-                img_r = cv2.resize(
-                    img_r, self.image_size, interpolation=cv2.INTER_LINEAR).astype('float32')/255
-
-                img_f = img_f.transpose((2, 0, 1))
-                img_r = img_r.transpose((2, 0, 1))
-
-                # # 基于SSIM的一致性Map生成
-                map_shape = 14  # 224/16 = 14
-                # ssim_patch = np.zeros((map_shape, map_shape))
-                # ssim_map = cv2.resize(
-                #     ssim_map, self.image_size, interpolation=cv2.INTER_LINEAR).astype('float32')
-                # for i in range(map_shape):
-                #     for j in range(map_shape):
-                #         ssim_patch[i, j] = (
-                #             ssim_map[16*i:16*(i+1), 16*j:16*(j+1)]).mean()
-
-                mask_f = cv2.resize(
-                    mask, (map_shape, map_shape), interpolation=cv2.INTER_LINEAR).astype('float32')
-
-                mask_r = np.ones((196, 196),dtype='float32')
-                mask_f = self.Consistency2D(mask_f)  # ssim_patch，mask_f
-
-                flag = False
-            except Exception as e:
-                print(e)
-                # print(idx)
-                # traceback.print_exc()
-                idx = torch.randint(low=0, high=len(self), size=(1,)).item()
-
-        return img_f, img_r, mask_f, mask_r
-
-    def Consistency2D(self, mask):
-        real_mask = mask.flatten()  # shape like [1,196]
-        real_mask = real_mask.reshape((1,)+real_mask.shape)
-        consis_map = [np.squeeze(1 - abs(m - real_mask))
-                      for m in real_mask[0, :]]
-        return np.array(consis_map)
-
-    def get_source_transforms(self):
-        return alb.Compose([
-            alb.Compose([
-                alb.RGBShift((-20, 20), (-20, 20), (-20, 20), p=0.3),
-                alb.HueSaturationValue(
-                    hue_shift_limit=(-0.3, 0.3), sat_shift_limit=(-0.3, 0.3), val_shift_limit=(-0.3, 0.3), p=1),
-                alb.RandomBrightnessContrast(
-                    brightness_limit=(-0.1, 0.1), contrast_limit=(-0.1, 0.1), p=1),
-                # 添加额外的增强
-                # alb.RandomToneCurve (scale=0.01, p=0.1),
-                # alb.ImageCompression(quality_lower=80, quality_upper=100, p=0.1),
-            ], p=1),
-
-            alb.OneOf([
-                RandomDownScale(p=1),
-                alb.Sharpen(alpha=(0.2, 0.5), lightness=(0.5, 1.0), p=1),
-            ], p=1),
-
-        ], p=1.)
-
-    def get_transforms(self):
-        return alb.Compose([
-
-            alb.RGBShift((-20, 20), (-20, 20), (-20, 20), p=0.3),
-            alb.HueSaturationValue(
-                hue_shift_limit=(-0.3, 0.3), sat_shift_limit=(-0.3, 0.3), val_shift_limit=(-0.3, 0.3), p=0.3),
-            alb.RandomBrightnessContrast(
-                brightness_limit=(-0.3, 0.3), contrast_limit=(-0.3, 0.3), p=0.3),
-            alb.ImageCompression(quality_lower=40, quality_upper=100, p=0.5),
-
-        ],
-            additional_targets={f'image1': 'image'},
-            p=1.)
-
-    def randaffine(self, img, mask):
-        f = alb.Affine(
-            translate_percent={'x': (-0.03, 0.03), 'y': (-0.015, 0.015)},
-            scale=[0.95, 1/0.95],
-            fit_output=False,
-            p=1)
-
-        g = alb.ElasticTransform(
-            alpha=50,
-            sigma=7,
-            alpha_affine=0,
-            p=1,
-        )
-
-        transformed = f(image=img, mask=mask)
-        img = transformed['image']
-
-        mask = transformed['mask']
-        transformed = g(image=img, mask=mask)
-        mask = transformed['mask']
-        return img, mask
-
-    def randaffine_haar(self, img, mask):
-        f = alb.Affine(
-            # ##haar变换里有平移会出现栅格状
-            # translate_percent={'x': (-0.03, 0.03), 'y': (-0.015, 0.015)},
-            scale=[0.95, 1/0.95],
-            fit_output=False,
-            p=1)
-
-        g = alb.ElasticTransform(
-            alpha=50,
-            sigma=7,
-            alpha_affine=0,
-            p=1,
-        )
-        transformed = f(image=img, mask=mask)
-        img = transformed['image']
-        mask = transformed['mask']
-        transformed = g(image=img, mask=mask)
-        mask = transformed['mask']
-        return img, mask
+        return output
     
-    # ## 核心混合代码
-    def self_blending(self, img, landmark):
-        H, W = len(img), len(img[0])
+class Attention(nn.Module):
+    def __init__(self,
+                 dim,   # 输入token的dim
+                 num_heads=8,
+                 qkv_bias=False,
+                 qk_scale=None,
+                 attn_drop_ratio=0.,
+                 proj_drop_ratio=0.):
+        super(Attention, self).__init__()
+        self.num_heads = num_heads
+        head_dim = dim // num_heads
+        self.scale = qk_scale or head_dim ** -0.5
+        self.qkv = nn.Linear(dim, dim * 3, bias=qkv_bias)
+        self.attn_drop = nn.Dropout(attn_drop_ratio)
+        self.proj = nn.Linear(dim, dim)
+        self.proj_drop = nn.Dropout(proj_drop_ratio)
 
-        if np.random.rand() < 0.25:
-            landmark = landmark[:68]
-            
-        # if np.random.rand() < 0.75:
-        if True:
-            # 执行标准SBI
-            if exist_bi:
-                logging.disable(logging.FATAL)
-                mask = random_get_hull(landmark, img)[:, :, 0]
-                logging.disable(logging.NOTSET)
-            else:
-                mask = np.zeros_like(img[:, :, 0])
-                cv2.fillConvexPoly(mask, cv2.convexHull(landmark), 1.)
+    def forward(self, x):
+        # [batch_size, num_patches + 1, total_embed_dim]
+        B, N, C = x.shape
 
-            source = img.copy()
-            # ##随机对源或目标进行变换
-            if np.random.rand() < 0.5:
-                source = self.source_transforms(
-                    image=source.astype(np.uint8))['image']
-            else:
-                img = self.source_transforms(image=img.astype(np.uint8))['image']
+        # qkv(): -> [batch_size, num_patches + 1, 3 * total_embed_dim]
+        # reshape: -> [batch_size, num_patches + 1, 3, num_heads, embed_dim_per_head]
+        # permute: -> [3, batch_size, num_heads, num_patches + 1, embed_dim_per_head]
+        qkv = self.qkv(x).reshape(B, N, 3, self.num_heads, C //
+                                  self.num_heads).permute(2, 0, 3, 1, 4)
+        # [batch_size, num_heads, num_patches + 1, embed_dim_per_head]
+        # make torchscript happy (cannot use tensor as tuple)
+        q, k, v = qkv[0], qkv[1], qkv[2]
 
-            if True:  # SBI原始方法
-                source, mask = self.randaffine(source, mask)
-                mask_bi = mask.copy()
-                mask_bi = mask_bi.reshape(mask_bi.shape+(1,))
-                img_blended, mask = B.dynamic_blend(source, img, mask)
-            else:  # 小波方法
-                if np.random.rand() < 0.5:
-                    source, mask = self.randaffine_haar(source, mask)
-                else:
-                    source, mask = self.randaffine(source, mask)
-                mask_ret = mask.copy()
-                img_blended, mask = B.haar_blend(source, img, mask)
+        # transpose: -> [batch_size, num_heads, embed_dim_per_head, num_patches + 1]
+        # @: multiply -> [batch_size, num_heads, num_patches + 1, num_patches + 1]
+        attn = (q @ k.transpose(-2, -1)) * self.scale
+        attn = attn.softmax(dim=-1)
+        # for get local
+        attn_map = attn
+        attn = self.attn_drop(attn_map)
+
+        # @: multiply -> [batch_size, num_heads, num_patches + 1, embed_dim_per_head]
+        # transpose: -> [batch_size, num_patches + 1, num_heads, embed_dim_per_head]
+        # reshape: -> [batch_size, num_patches + 1, total_embed_dim]
+        x = (attn @ v).transpose(1, 2).reshape(B, N, C)
+        x = self.proj(x)
+        x = self.proj_drop(x)
+        return x
+
+class Attention_uia(nn.Module):
+    def __init__(self,
+                 dim,   # 输入token的dim
+                 ret_attn_map,
+                 num_heads=8,
+                 qkv_bias=False,
+                 qk_scale=None,
+                 attn_drop_ratio=0.,
+                 proj_drop_ratio=0.):
+        super().__init__()
+        self.num_heads = num_heads
+        head_dim = dim // num_heads
+        self.scale = qk_scale or head_dim ** -0.5
+        self.qkv = nn.Linear(dim, dim * 3, bias=qkv_bias)
+        self.attn_drop = nn.Dropout(attn_drop_ratio)
+        self.proj = nn.Linear(dim, dim)
+        self.proj_drop = nn.Dropout(proj_drop_ratio)
+        self.ret_attn_map = ret_attn_map
+
+    def forward(self, x):
+        # [batch_size, num_patches + 1, total_embed_dim]
+        B, N, C = x.shape
+
+        # qkv(): -> [batch_size, num_patches + 1, 3 * total_embed_dim]
+        # reshape: -> [batch_size, num_patches + 1, 3, num_heads, embed_dim_per_head]
+        # permute: -> [3, batch_size, num_heads, num_patches + 1, embed_dim_per_head]
+        qkv = self.qkv(x).reshape(B, N, 3, self.num_heads, C //
+                                  self.num_heads).permute(2, 0, 3, 1, 4)
+        # [batch_size, num_heads, num_patches + 1, embed_dim_per_head]
+        # make torchscript happy (cannot use tensor as tuple)
+        q, k, v = qkv[0], qkv[1], qkv[2]
+
+        # transpose: -> [batch_size, num_heads, embed_dim_per_head, num_patches + 1]
+        # @: multiply -> [batch_size, num_heads, num_patches + 1, num_patches + 1]
+        qk_map = (q @ k.transpose(-2, -1)) * self.scale
+        attn = qk_map.softmax(dim=-1)
+        # for get local
+        attn = self.attn_drop(attn)
+
+        # @: multiply -> [batch_size, num_heads, num_patches + 1, embed_dim_per_head]
+        # transpose: -> [batch_size, num_patches + 1, num_heads, embed_dim_per_head]
+        # reshape: -> [batch_size, num_patches + 1, total_embed_dim]
+        x = (attn @ v).transpose(1, 2).reshape(B, N, C)
+        x = self.proj(x)
+        x = self.proj_drop(x)
+        if self.ret_attn_map:
+            return x, qk_map
         else:
-            # 执行随机五官区域
-            five_key = get_five_key(landmark)
-            # reg = np.random.randint(0, 10)
-            reg = 4 # 只换嘴部
-            # 得到deform后的mask
-            mask, mask_bi = mask_patch(reg, img, five_key)
-            source = img.copy()
-            # ##随机对源或目标进行变换
-            if np.random.rand() < 0.5:
-                source = self.source_transforms(
-                    image=source.astype(np.uint8))['image']
+            return x
+        
+class Mlp(nn.Module):
+    """
+    MLP as used in Vision Transformer, MLP-Mixer and related networks
+    """
+
+    def __init__(self, in_features, hidden_features=None, out_features=None, act_layer=nn.GELU, drop=0.):
+        super().__init__()
+        out_features = out_features or in_features
+        hidden_features = hidden_features or in_features
+        self.fc1 = nn.Linear(in_features, hidden_features)
+        self.act = act_layer()
+        self.fc2 = nn.Linear(hidden_features, out_features)
+        self.drop = nn.Dropout(drop)
+
+    def forward(self, x):
+        x = self.fc1(x)
+        x = self.act(x)
+        x = self.drop(x)
+        x = self.fc2(x)
+        x = self.drop(x)
+        return x
+
+class Block(nn.Module):
+    def __init__(self,
+                 dim,
+                 num_heads,
+                 mlp_ratio=4.,
+                 qkv_bias=False,
+                 qk_scale=None,
+                 drop_ratio=0.,
+                 attn_drop_ratio=0.,
+                 drop_path_ratio=0.,
+                 act_layer=nn.GELU,
+                 norm_layer=nn.LayerNorm):
+        super(Block, self).__init__()
+        self.norm1 = norm_layer(dim)
+        self.attn = Attention(dim, num_heads=num_heads, qkv_bias=qkv_bias, qk_scale=qk_scale,
+                              attn_drop_ratio=attn_drop_ratio, proj_drop_ratio=drop_ratio)
+        # NOTE: drop path for stochastic depth, we shall see if this is better than dropout here
+        self.drop_path = DropPath(
+            drop_path_ratio) if drop_path_ratio > 0. else nn.Identity()
+        self.norm2 = norm_layer(dim)
+        mlp_hidden_dim = int(dim * mlp_ratio)
+        self.mlp = Mlp(in_features=dim, hidden_features=mlp_hidden_dim,
+                       act_layer=act_layer, drop=drop_ratio)
+
+    def forward(self, x):
+        x = x + self.drop_path(self.attn(self.norm1(x)))
+        x = x + self.drop_path(self.mlp(self.norm2(x)))
+        return x
+
+class Block_uia(nn.Module):
+    def __init__(self,
+                 dim,
+                 num_heads,
+                 ret_attn_map=False,
+                 mlp_ratio=4.,
+                 qkv_bias=False,
+                 qk_scale=None,
+                 drop_ratio=0.,
+                 attn_drop_ratio=0.,
+                 drop_path_ratio=0.,
+                 act_layer=nn.GELU,
+                 norm_layer=nn.LayerNorm,
+                 ):
+        super().__init__()
+        self.norm1 = norm_layer(dim)
+        self.ret_attn_map = ret_attn_map
+        self.attn = Attention_uia(dim, self.ret_attn_map, num_heads=num_heads, qkv_bias=qkv_bias, qk_scale=qk_scale,
+                              attn_drop_ratio=attn_drop_ratio, proj_drop_ratio=drop_ratio)
+        # NOTE: drop path for stochastic depth, we shall see if this is better than dropout here
+        self.drop_path = DropPath(
+            drop_path_ratio) if drop_path_ratio > 0. else nn.Identity()
+        self.norm2 = norm_layer(dim)
+        mlp_hidden_dim = int(dim * mlp_ratio)
+        self.mlp = Mlp(in_features=dim, hidden_features=mlp_hidden_dim,
+                       act_layer=act_layer, drop=drop_ratio)
+        
+    def forward(self, x):
+        if self.ret_attn_map:
+            x, attn_map = self.attn(self.norm1(x))
+            x = x + self.drop_path(x)
+            x = x + self.drop_path(self.mlp(self.norm2(x)))
+            return x, attn_map
+        else:
+            x = x + self.drop_path(self.attn(self.norm1(x)))
+            x = x + self.drop_path(self.mlp(self.norm2(x)))
+            return x
+
+class VisionTransformer_custom(nn.Module):
+    def __init__(self, img_size=224, patch_size=16, in_c=3, num_classes=1000,
+                 embed_dim=768, depth=12, num_heads=12, mlp_ratio=4.0, qkv_bias=True,
+                 qk_scale=None, representation_size=None, distilled=False, drop_ratio=0.,
+                 attn_drop_ratio=0., drop_path_ratio=0., embed_layer=PatchEmbed, norm_layer=None,
+                 act_layer=None, isEmbed=True):
+
+        super(VisionTransformer_custom, self).__init__()
+        self.num_classes = num_classes
+        # num_features for consistency with other models
+        self.num_features = self.embed_dim = embed_dim
+        self.num_tokens = 2 if distilled else 1
+        norm_layer = norm_layer or partial(nn.LayerNorm, eps=1e-6)
+        act_layer = act_layer or nn.GELU
+
+        self.patch_embed = embed_layer(
+            img_size=img_size, patch_size=patch_size, in_c=in_c, embed_dim=embed_dim)
+        num_patches = self.patch_embed.num_patches
+
+        self.cls_token = nn.Parameter(torch.zeros(1, 1, embed_dim))
+        self.dist_token = nn.Parameter(torch.zeros(
+            1, 1, embed_dim)) if distilled else None
+        self.pos_embed = nn.Parameter(torch.zeros(
+            1, num_patches + self.num_tokens, embed_dim))
+        self.pos_drop = nn.Dropout(p=drop_ratio)
+
+        # stochastic depth decay rule
+        dpr = [x.item() for x in torch.linspace(0, drop_path_ratio, depth)]
+        self.blocks = nn.Sequential(*[
+            Block(dim=embed_dim, num_heads=num_heads, mlp_ratio=mlp_ratio, qkv_bias=qkv_bias, qk_scale=qk_scale,
+                     drop_ratio=drop_ratio, attn_drop_ratio=attn_drop_ratio, drop_path_ratio=dpr[
+                         i],
+                     norm_layer=norm_layer, act_layer=act_layer)
+            for i in range(depth)
+        ])
+        self.norm = norm_layer(embed_dim)
+        self.isEmbed = isEmbed
+        # Representation layer
+        if representation_size and not distilled:
+            self.has_logits = True
+            self.num_features = representation_size
+            self.pre_logits = nn.Sequential(OrderedDict([
+                ("fc", nn.Linear(embed_dim, representation_size)),
+                ("act", nn.Tanh())
+            ]))
+        else:
+            self.has_logits = False
+            self.pre_logits = nn.Identity()
+
+        # Classifier head(s)
+        self.head = nn.Linear(
+            self.num_features, num_classes) if num_classes > 0 else nn.Identity()
+        self.head_dist = None
+        if distilled:
+            self.head_dist = nn.Linear(
+                self.embed_dim, self.num_classes) if num_classes > 0 else nn.Identity()
+
+        # Weight init
+        nn.init.trunc_normal_(self.pos_embed, std=0.02)
+        if self.dist_token is not None:
+            nn.init.trunc_normal_(self.dist_token, std=0.02)
+
+        nn.init.trunc_normal_(self.cls_token, std=0.02)
+        self.apply(_init_vit_weights)
+
+    def forward_features(self, x):
+        # [B, C, H, W] -> [B, num_patches, embed_dim]
+        if self.isEmbed:
+            x = self.patch_embed(x)  # [B, 196, 768]
+            # x = self.patch_embed_hMLP(x)  # [B, 196, 768]
+        # [1, 1, 768] -> [B, 1, 768]
+        cls_token = self.cls_token.expand(x.shape[0], -1, -1)
+        if self.dist_token is None:
+            x = torch.cat((cls_token, x), dim=1)  # [B, 197, 768]
+        else:
+            x = torch.cat((cls_token, self.dist_token.expand(
+                x.shape[0], -1, -1), x), dim=1)
+
+        x = self.pos_drop(x + self.pos_embed)
+        x = self.blocks(x)
+        x = self.norm(x)
+        if self.dist_token is None:
+            # 还需要返回其它[B,196,768]的特征token
+            return self.pre_logits(x[:, 0]), x[:, 1:]
+        else:
+            return x[:, 0], x[:, 1]
+
+    def forward(self, x):
+        x, patch_token = self.forward_features(x)
+        if self.head_dist is not None:
+            x, x_dist = self.head(x[0]), self.head_dist(x[1])
+            if self.training and not torch.jit.is_scripting():
+                # during inference, return the average of both classifier predictions
+                return x, x_dist
             else:
-                img = self.source_transforms(image=img.astype(np.uint8))['image']
-            # 直接混合
-            img_blended = (mask * source + (1 - mask) * img)
-            
-        img_blended = img_blended.astype(np.uint8)
-        img = img.astype(np.uint8)
+                return (x + x_dist) / 2
+        else:
+            x = self.head(x)
+        return x, patch_token
+    
+class VisionTransformer_uia(nn.Module):
+    def __init__(self, img_size=224, patch_size=16, in_c=3, num_classes=1000,
+                 embed_dim=768, depth=12, num_heads=12, mlp_ratio=4.0, qkv_bias=True,
+                 qk_scale=None, representation_size=None, distilled=False, drop_ratio=0.,
+                 attn_drop_ratio=0., drop_path_ratio=0., embed_layer=PatchEmbed, norm_layer=None,
+                 act_layer=None, isEmbed=True, attn_list=[8,9,10,11]):
 
-        return img, img_blended, mask_bi, mask
+        super().__init__()
+        self.attn_list = attn_list
+        self.num_classes = num_classes
+        # num_features for consistency with other models
+        self.num_features = self.embed_dim = embed_dim
+        self.num_tokens = 2 if distilled else 1
+        norm_layer = norm_layer or partial(nn.LayerNorm, eps=1e-6)
+        act_layer = act_layer or nn.GELU
 
-    def reorder_landmark(self, landmark):
-        landmark_add = np.zeros((13, 2))
-        for idx, idx_l in enumerate([77, 75, 76, 68, 69, 70, 71, 80, 72, 73, 79, 74, 78]):
-            landmark_add[idx] = landmark[idx_l]
-        landmark[68:] = landmark_add
-        return landmark
+        self.patch_embed = embed_layer(
+            img_size=img_size, patch_size=patch_size, in_c=in_c, embed_dim=embed_dim)
+        num_patches = self.patch_embed.num_patches
 
-    def hflip(self, img, mask=None, landmark=None, bbox=None):
-        H, W = img.shape[:2]
-        landmark = landmark.copy()
-        bbox = bbox.copy()
+        self.cls_token = nn.Parameter(torch.zeros(1, 1, embed_dim))
+        self.dist_token = nn.Parameter(torch.zeros(
+            1, 1, embed_dim)) if distilled else None
+        self.pos_embed = nn.Parameter(torch.zeros(
+            1, num_patches + self.num_tokens, embed_dim))
+        self.pos_drop = nn.Dropout(p=drop_ratio)
 
-        if landmark is not None:
-            landmark_new = np.zeros_like(landmark)
+        # stochastic depth decay rule
+        dpr = [x.item() for x in torch.linspace(0, drop_path_ratio, depth)]
+        self.blocks =  nn.ModuleList([
+            Block_uia(dim=embed_dim, num_heads=num_heads, ret_attn_map=bool(i in self.attn_list) ,mlp_ratio=mlp_ratio, qkv_bias=qkv_bias, qk_scale=qk_scale,
+                     drop_ratio=drop_ratio, attn_drop_ratio=attn_drop_ratio, drop_path_ratio=dpr[
+                         i],
+                     norm_layer=norm_layer, act_layer=act_layer)
+            for i in range(depth)
+        ])
+        self.norm = norm_layer(embed_dim)
+        self.isEmbed = isEmbed
+        # Representation layer
+        if representation_size and not distilled:
+            self.has_logits = True
+            self.num_features = representation_size
+            self.pre_logits = nn.Sequential(OrderedDict([
+                ("fc", nn.Linear(embed_dim, representation_size)),
+                ("act", nn.Tanh())
+            ]))
+        else:
+            self.has_logits = False
+            self.pre_logits = nn.Identity()
 
-            landmark_new[:17] = landmark[:17][::-1]
-            landmark_new[17:27] = landmark[17:27][::-1]
+        # Classifier head(s)
+        # self.head = nn.Linear(
+        #     self.num_features, num_classes) if num_classes > 0 else nn.Identity()
+        self.head = nn.Linear(embed_dim*2, num_classes) if num_classes > 0 else nn.Identity()
+        self.head_dist = None
+        if distilled:
+            self.head_dist = nn.Linear(
+                self.embed_dim, self.num_classes) if num_classes > 0 else nn.Identity()
 
-            landmark_new[27:31] = landmark[27:31]
-            landmark_new[31:36] = landmark[31:36][::-1]
+        # Weight init
+        nn.init.trunc_normal_(self.pos_embed, std=0.02)
+        if self.dist_token is not None:
+            nn.init.trunc_normal_(self.dist_token, std=0.02)
 
-            landmark_new[36:40] = landmark[42:46][::-1]
-            landmark_new[40:42] = landmark[46:48][::-1]
+        nn.init.trunc_normal_(self.cls_token, std=0.02)
+        self.apply(_init_vit_weights)
 
-            landmark_new[42:46] = landmark[36:40][::-1]
-            landmark_new[46:48] = landmark[40:42][::-1]
+    def forward_features(self, x):
+        # [B, C, H, W] -> [B, num_patches, embed_dim]
+        if self.isEmbed:
+            x = self.patch_embed(x)  # [B, 196, 768]
+        # [1, 1, 768] -> [B, 1, 768]
+        cls_token = self.cls_token.expand(x.shape[0], -1, -1)
+        if self.dist_token is None:
+            x = torch.cat((cls_token, x), dim=1)  # [B, 197, 768]
+        else:
+            x = torch.cat((cls_token, self.dist_token.expand(
+                x.shape[0], -1, -1), x), dim=1)
 
-            landmark_new[48:55] = landmark[48:55][::-1]
-            landmark_new[55:60] = landmark[55:60][::-1]
-
-            landmark_new[60:65] = landmark[60:65][::-1]
-            landmark_new[65:68] = landmark[65:68][::-1]
-            if len(landmark) == 68:
-                pass
-            elif len(landmark) == 81:
-                landmark_new[68:81] = landmark[68:81][::-1]
+        x = self.pos_drop(x + self.pos_embed)
+        # x, attn_map = self.blocks(x)
+        attn_map_group = []
+        for i,blk in enumerate(self.blocks):
+            # 不返回Attention Map的Block
+            if i not in self.attn_list:
+                x = blk(x)
+            # 返回的Block
             else:
-                raise NotImplementedError
-            landmark_new[:, 0] = W-landmark_new[:, 0]
-
+                x, attn_map = blk(x)
+                attn_map_group.append(attn_map)
+        x = self.norm(x)
+        # x_block = x[:, 1:].reshape((x_block.size(0), int(x_block.size(1)**0.5), int(x_block.size(1)**0.5), x_block.size(2)))
+        attn_block = torch.cat(attn_map_group, dim=1)
+        if self.dist_token is None:
+            # 还需要返回其它[B,196,768]的特征token和attn_map
+            return self.pre_logits(x[:, 0]), x[:, 1:], attn_block
         else:
-            landmark_new = None
+            return x[:, 0], x[:, 1]
 
-        if bbox is not None:
-            bbox_new = np.zeros_like(bbox)
-            bbox_new[0, 0] = bbox[1, 0]
-            bbox_new[1, 0] = bbox[0, 0]
-            bbox_new[:, 0] = W-bbox_new[:, 0]
-            bbox_new[:, 1] = bbox[:, 1].copy()
-            if len(bbox) > 2:
-                bbox_new[2, 0] = W-bbox[3, 0]
-                bbox_new[2, 1] = bbox[3, 1]
-                bbox_new[3, 0] = W-bbox[2, 0]
-                bbox_new[3, 1] = bbox[2, 1]
-                bbox_new[4, 0] = W-bbox[4, 0]
-                bbox_new[4, 1] = bbox[4, 1]
-                bbox_new[5, 0] = W-bbox[6, 0]
-                bbox_new[5, 1] = bbox[6, 1]
-                bbox_new[6, 0] = W-bbox[5, 0]
-                bbox_new[6, 1] = bbox[5, 1]
+    def forward(self, x):
+        x, patch_token, attn_block = self.forward_features(x)
+        if self.head_dist is not None:
+            x, x_dist = self.head(x[0]), self.head_dist(x[1])
+            if self.training and not torch.jit.is_scripting():
+                # during inference, return the average of both classifier predictions
+                return x, x_dist
+            else:
+                return (x + x_dist) / 2
         else:
-            bbox_new = None
+            # patch token [B, 196, 768]
+            B, PP, C = patch_token.shape
+            localization_map = torch.sigmoid(torch.mean(attn_block[:, :, 0, 1:], dim=1))
+            localization_map = localization_map.reshape(B,1,PP)/PP  #.to(patch_token.device)
+            x = torch.cat([x, torch.bmm(localization_map, patch_token).squeeze(1)], -1) 
+            x = self.head(x)
+        return x, patch_token
 
-        if mask is not None:
-            mask = mask[:, ::-1]
+class VisionTransformer_uia_v2(nn.Module):
+    def __init__(self, img_size=224, patch_size=16, in_c=3, num_classes=1000,
+                 embed_dim=768, depth=12, num_heads=12, mlp_ratio=4.0, qkv_bias=True,
+                 qk_scale=None, representation_size=None, distilled=False, drop_ratio=0.,
+                 attn_drop_ratio=0., drop_path_ratio=0., embed_layer=PatchEmbed, norm_layer=None,
+                 act_layer=None, isEmbed=True, attn_list=[8,9,10,11]):
+
+        super().__init__()
+        self.attn_list = attn_list
+        self.num_classes = num_classes
+        # num_features for consistency with other models
+        self.num_features = self.embed_dim = embed_dim
+        self.num_tokens = 2 if distilled else 1
+        norm_layer = norm_layer or partial(nn.LayerNorm, eps=1e-6)
+        act_layer = act_layer or nn.GELU
+
+        self.patch_embed = embed_layer(
+            img_size=img_size, patch_size=patch_size, in_c=in_c, embed_dim=embed_dim)
+        num_patches = self.patch_embed.num_patches
+
+        self.cls_token = nn.Parameter(torch.zeros(1, 1, embed_dim))
+        self.dist_token = nn.Parameter(torch.zeros(
+            1, 1, embed_dim)) if distilled else None
+        self.pos_embed = nn.Parameter(torch.zeros(
+            1, num_patches + self.num_tokens, embed_dim))
+        self.pos_drop = nn.Dropout(p=drop_ratio)
+
+        # stochastic depth decay rule
+        dpr = [x.item() for x in torch.linspace(0, drop_path_ratio, depth)]
+        self.blocks =  nn.ModuleList([
+            Block_uia(dim=embed_dim, num_heads=num_heads, ret_attn_map=bool(i in self.attn_list) ,mlp_ratio=mlp_ratio, qkv_bias=qkv_bias, qk_scale=qk_scale,
+                     drop_ratio=drop_ratio, attn_drop_ratio=attn_drop_ratio, drop_path_ratio=dpr[
+                         i],
+                     norm_layer=norm_layer, act_layer=act_layer)
+            for i in range(depth)
+        ])
+        self.norm = norm_layer(embed_dim)
+        self.isEmbed = isEmbed
+        # Representation layer
+        if representation_size and not distilled:
+            self.has_logits = True
+            self.num_features = representation_size
+            self.pre_logits = nn.Sequential(OrderedDict([
+                ("fc", nn.Linear(embed_dim, representation_size)),
+                ("act", nn.Tanh())
+            ]))
         else:
-            mask = None
-        img = img[:, ::-1].copy()
-        return img, mask, landmark_new, bbox_new
+            self.has_logits = False
+            self.pre_logits = nn.Identity()
 
-    def collate_fn(self, batch):
-        img_f, img_r, mask_f, mask_r = zip(*batch)
-        data = {}
-        data['img'] = torch.cat(
-            [torch.tensor(img_r).float(), torch.tensor(img_f).float()], 0)
-        data['label'] = torch.tensor([0]*len(img_r)+[1]*len(img_f))
-        data['map'] = torch.cat(
-            [torch.tensor(mask_r).float(), torch.tensor(mask_f).float()], 0)
-        return data
+        # Classifier head(s)
+        # self.head = nn.Linear(
+        #     self.num_features, num_classes) if num_classes > 0 else nn.Identity()
+        self.head_drop = nn.Dropout(p=0.1)
+        self.head = nn.Linear(embed_dim*2, num_classes) if num_classes > 0 else nn.Identity()
+        self.head_dist = None
+        if distilled:
+            self.head_dist = nn.Linear(
+                self.embed_dim, self.num_classes) if num_classes > 0 else nn.Identity()
 
-    def worker_init_fn(self, worker_id):
-        np.random.seed(np.random.get_state()[1][0] + worker_id)
-        # # worker_seed = torch.initial_seed() % 2**32
-        # # np.random.seed(worker_seed)
+        # Weight init
+        nn.init.trunc_normal_(self.pos_embed, std=0.02)
+        if self.dist_token is not None:
+            nn.init.trunc_normal_(self.dist_token, std=0.02)
 
-def convert_consis(map):
-    assert map.shape==(196,196)
-    consis_img = np.zeros((196,196))
-    for i in range(196):
-        start_h = 14*(i // 14)
-        start_w = 14*(i % 14)
-        for j in range(196):
-            h = j // 14
-            w = j % 14
-            consis_img[start_h+h,start_w+w] = map[i,j]
-    return consis_img
+        nn.init.trunc_normal_(self.cls_token, std=0.02)
+        self.apply(_init_vit_weights)
+
+    def forward_features(self, x):
+        # [B, C, H, W] -> [B, num_patches, embed_dim]
+        if self.isEmbed:
+            x = self.patch_embed(x)  # [B, 196, 768]
+        # [1, 1, 768] -> [B, 1, 768]
+        cls_token = self.cls_token.expand(x.shape[0], -1, -1)
+        if self.dist_token is None:
+            x = torch.cat((cls_token, x), dim=1)  # [B, 197, 768]
+        else:
+            x = torch.cat((cls_token, self.dist_token.expand(
+                x.shape[0], -1, -1), x), dim=1)
+
+        x = self.pos_drop(x + self.pos_embed)
+        # x, attn_map = self.blocks(x)
+        attn_map_group = []
+        for i,blk in enumerate(self.blocks):
+            # 不返回Attention Map的Block
+            if i not in self.attn_list:
+                x = blk(x)
+            # 返回的Block
+            else:
+                x, attn_map = blk(x)
+                attn_map_group.append(attn_map)
+        x = self.norm(x)
+        # x_block = x[:, 1:].reshape((x_block.size(0), int(x_block.size(1)**0.5), int(x_block.size(1)**0.5), x_block.size(2)))
+        attn_block = torch.cat(attn_map_group, dim=1)
+        if self.dist_token is None:
+            # 还需要返回其它[B,196,768]的特征token和attn_map
+            return self.pre_logits(x[:, 0]), x[:, 1:], attn_block
+        else:
+            return x[:, 0], x[:, 1]
+
+    def forward(self, x):
+        x, patch_token, attn_block = self.forward_features(x)
+        if self.head_dist is not None:
+            x, x_dist = self.head(x[0]), self.head_dist(x[1])
+            if self.training and not torch.jit.is_scripting():
+                # during inference, return the average of both classifier predictions
+                return x, x_dist
+            else:
+                return (x + x_dist) / 2
+        else:
+            # patch token [B, 196, 768]
+            B, PP, C = patch_token.shape
+            attn_qk_map_avg = torch.mean(attn_block, dim=1, keepdim=True)
+            attn_patch_qk_map = attn_qk_map_avg[:, :, 1:, 1:].squeeze(1) # 计算平均patch token之间的qk map [B,196,196]
+            attn_cls_qk_map = attn_qk_map_avg[:, :, 0, 1:]
+            localization_map = torch.softmax(attn_cls_qk_map, dim=-1) # 计算CLS和其它token的平均attn map [B,1,196]
+            # localization_map = localization_map.reshape(B,1,PP) #.to(patch_token.device)
+            x = torch.cat([x, torch.bmm(localization_map, patch_token).squeeze(1)], -1) 
+            x = self.head(self.head_drop(x))
+        return x, attn_patch_qk_map
+    
+def _init_vit_weights(m):
+    """
+    ViT weight initialization
+    :param m: module
+    """
+    if isinstance(m, nn.Linear):
+        nn.init.trunc_normal_(m.weight, std=.01)
+        if m.bias is not None:
+            nn.init.zeros_(m.bias)
+    elif isinstance(m, nn.Conv2d):
+        nn.init.kaiming_normal_(m.weight, mode="fan_out")
+        if m.bias is not None:
+            nn.init.zeros_(m.bias)
+    elif isinstance(m, nn.LayerNorm):
+        nn.init.zeros_(m.bias)
+        nn.init.ones_(m.weight)
+        
+def vit_base_patch16_224_in21k_uia(num_classes: int = 21843, has_logits: bool = True, isEmbed: bool = True, drop_ratio: float = 0.,
+                                           attn_drop_ratio: float = 0., drop_path_ratio: float = 0., keepEmbedWeight: bool = True,  attn_list: list = [8,9,10,11]):
+    model = VisionTransformer_uia(img_size=224,
+                                          patch_size=16,
+                                          embed_dim=768,
+                                          depth=12,
+                                          num_heads=12,
+                                          drop_ratio=drop_ratio,
+                                          attn_drop_ratio=attn_drop_ratio,
+                                          drop_path_ratio=drop_path_ratio,
+                                          representation_size=768 if has_logits else None,
+                                          num_classes=num_classes, isEmbed=isEmbed,
+                                          attn_list=attn_list)
+    if not keepEmbedWeight:
+        del model.patch_embed
+    weight_pth = 'src/jx_vit_base_patch16_224_in21k-e5005f0a.pth'
+    weights_dict = torch.load(weight_pth)
+    # # 删除不需要的权重
+    del_keys = ['head.weight', 'head.bias'] if model.has_logits \
+        else ['pre_logits.fc.weight', 'pre_logits.fc.bias', 'head.weight', 'head.bias']
+    for k in del_keys:
+        del weights_dict[k]
+    # # # for DEBUG
+    # weight_pth = 'output/3090_pretrained/ViT-4/8_0.9926_val.tar'
+    # weights_dict = torch.load(weight_pth)["model"]
+    print(model.load_state_dict(weights_dict, strict=False))
+    return model
+
+def vit_base_patch16_224_in21k_uia_v2(num_classes: int = 21843, has_logits: bool = True, isEmbed: bool = True, drop_ratio: float = 0.,
+                                           attn_drop_ratio: float = 0., drop_path_ratio: float = 0., keepEmbedWeight: bool = True,  attn_list: list = [8,9,10,11]):
+    model = VisionTransformer_uia_v2(img_size=224,
+                                          patch_size=16,
+                                          embed_dim=768,
+                                          depth=12,
+                                          num_heads=12,
+                                          drop_ratio=drop_ratio,
+                                          attn_drop_ratio=attn_drop_ratio,
+                                          drop_path_ratio=drop_path_ratio,
+                                          representation_size=768 if has_logits else None,
+                                          num_classes=num_classes, isEmbed=isEmbed,
+                                          attn_list=attn_list)
+    if not keepEmbedWeight:
+        del model.patch_embed
+    weight_pth = 'src/jx_vit_base_patch16_224_in21k-e5005f0a.pth'
+    weights_dict = torch.load(weight_pth)
+    # # 删除不需要的权重
+    del_keys = ['head.weight', 'head.bias'] if model.has_logits \
+        else ['pre_logits.fc.weight', 'pre_logits.fc.bias', 'head.weight', 'head.bias']
+    for k in del_keys:
+        del weights_dict[k]
+    # # # for DEBUG
+    # weight_pth = 'output/3090_pretrained/ViT-4/8_0.9926_val.tar'
+    # weights_dict = torch.load(weight_pth)["model"]
+    print(model.load_state_dict(weights_dict, strict=False))
+    return model
+
+def vit_base_patch16_224_in21k_custom(num_classes: int = 21843, has_logits: bool = True, isEmbed: bool = True, drop_ratio: float = 0.,
+                                           attn_drop_ratio: float = 0., drop_path_ratio: float = 0., keepEmbedWeight: bool = True):
+    model = VisionTransformer_custom(img_size=224,
+                                          patch_size=16,
+                                          embed_dim=768,
+                                          depth=12,
+                                          num_heads=12,
+                                          drop_ratio=drop_ratio,
+                                          attn_drop_ratio=attn_drop_ratio,
+                                          drop_path_ratio=drop_path_ratio,
+                                          representation_size=768 if has_logits else None,
+                                          num_classes=num_classes, isEmbed=isEmbed)
+    if not keepEmbedWeight:
+        del model.patch_embed
+    weight_pth = 'src/jx_vit_base_patch16_224_in21k-e5005f0a.pth'
+    weights_dict = torch.load(weight_pth)
+    # # 删除不需要的权重
+    del_keys = ['head.weight', 'head.bias'] if model.has_logits \
+        else ['pre_logits.fc.weight', 'pre_logits.fc.bias', 'head.weight', 'head.bias']
+    for k in del_keys:
+        del weights_dict[k]
+    # # # for DEBUG
+    # weight_pth = 'output/3090_pretrained/ViT-4/8_0.9926_val.tar'
+    # weights_dict = torch.load(weight_pth)["model"]
+    print(model.load_state_dict(weights_dict, strict=False))
+    return model
+    
+def hDRMLPv2_embed(weight_pth:str):
+    model = hDRMLPv2Embed(img_size=(224, 224), patch_size=(16, 16), in_chans=3, embed_dim=768, norm_layer=nn.BatchNorm2d)
+    if weight_pth is not None:
+        weights_dict = torch.load(weight_pth)['model']
+        # # 删除不需要的权重
+        keys = list(weights_dict.keys())
+        for k in keys:
+            if 'hproj' not in k:
+                del weights_dict[k]
+            else:
+                print('Load: ',k)
+        print(model.load_state_dict(weights_dict, strict=False))
+        
+    return model
+
+class Vit_hDRMLPv2(nn.Module):
+    def __init__(self, weight_pth=None):
+        super().__init__()
+        self.vit_model = vit_base_patch16_224_in21k_custom(
+            num_classes=2, has_logits=False, isEmbed=False, keepEmbedWeight=False)
+        self.custom_embed = hDRMLPv2_embed(weight_pth)
+    def forward(self, x):
+        x = self.custom_embed(x)
+        cls_token, patch_token = self.vit_model(x)
+        return cls_token
+    def test_time(self, x):
+        return self.forward(x)
+    
+class Vit_hDRMLPv2_ImageNet(nn.Module):
+    def __init__(self, weight_pth=None):
+        super().__init__()
+        self.vit_model = vit_base_patch16_224_in21k_custom(
+            num_classes=100, has_logits=False, isEmbed=False, keepEmbedWeight=False, drop_ratio=0.1)
+        self.custom_embed = hDRMLPv2_embed(weight_pth)
+    def forward(self, x):
+        x = self.custom_embed(x)
+        cls_token, patch_token = self.vit_model(x)
+        return cls_token
+    def test_time(self, x):
+        return self.forward(x)
+
+class Vit_consis_hDRMLPv2(nn.Module):
+    def __init__(self, weight_pth=None):
+        super().__init__()
+        self.vit_model = vit_base_patch16_224_in21k_custom(
+            num_classes=2, has_logits=False, isEmbed=False, keepEmbedWeight=False)
+        self.custom_embed = hDRMLPv2_embed(weight_pth)
+        # consis-1
+        self.K = nn.Linear(768, 768)
+        self.Q = nn.Linear(768, 768)
+        self.scale = 768 ** -0.5
+    def forward(self, x):
+        x = self.custom_embed(x)
+        cls_token, patch_token = self.vit_model(x)
+        # # consis-1
+        consis_map = (self.K(patch_token) @
+                      self.Q(patch_token).transpose(-2, -1)) * self.scale
+        # # consis-2 add norm
+        # consis_map_norm = torch.norm(patch_token, p=2, dim=2, keepdim=True)
+        # consis_map = 0.5 + 0.5*((self.K(patch_token) @ self.Q(patch_token).transpose(-2, -1)) / (consis_map_norm@consis_map_norm.transpose(-2, -1)))
+        return cls_token, consis_map
+
+    def test_time(self, x):
+        x = self.custom_embed(x)
+        cls_token, patch_token = self.vit_model(x)
+        return cls_token
+
+class Vit_UIA_hDRMLPv2(nn.Module):
+    def __init__(self, weight_pth=None, attn_list=[9,10,11]):
+        super().__init__()
+        self.vit_model = vit_base_patch16_224_in21k_uia(
+            num_classes=2, has_logits=False, isEmbed=False, keepEmbedWeight=False, attn_list=attn_list)
+        self.custom_embed = hDRMLPv2_embed(weight_pth)
+        # consis-1
+        self.K = nn.Linear(768, 768)
+        self.Q = nn.Linear(768, 768)
+        self.scale = 768 ** -0.5
+    def forward(self, x):
+        x = self.custom_embed(x)
+        cls_token, patch_token = self.vit_model(x)
+        # # consis-1
+        consis_map = (self.K(patch_token) @
+                      self.Q(patch_token).transpose(-2, -1)) * self.scale
+        # # consis-2 add norm
+        # consis_map_norm = torch.norm(patch_token, p=2, dim=2, keepdim=True)
+        # consis_map = 0.5 + 0.5*((self.K(patch_token) @ self.Q(patch_token).transpose(-2, -1)) / (consis_map_norm@consis_map_norm.transpose(-2, -1)))
+        return cls_token, consis_map
+
+    def test_time(self, x):
+        x = self.custom_embed(x)
+        cls_token, patch_token = self.vit_model(x)
+        return cls_token
+
+class Vit_UIAv2_hDRMLPv2(nn.Module):
+    def __init__(self, weight_pth=None, attn_list=[7,8,9,10,11]):
+        super().__init__()
+        self.vit_model = vit_base_patch16_224_in21k_uia_v2(
+            num_classes=2, has_logits=False, isEmbed=False, keepEmbedWeight=False, attn_list=attn_list)
+        self.custom_embed = hDRMLPv2_embed(weight_pth)
+       
+    def forward(self, x):
+        x = self.custom_embed(x)
+        cls_token, consis_map = self.vit_model(x)
+        return cls_token, consis_map
+
+    def test_time(self, x):
+        x = self.custom_embed(x)
+        cls_token, _ = self.vit_model(x)
+        return cls_token
 
 if __name__ == '__main__':
-    import blend as B
-    from PIL import Image
-    from initialize import *
-    from funcs import IoUfrom2bboxes, crop_face, RandomDownScale
-    from tqdm import tqdm
-    if exist_bi:
-        from library.vit_gen_pcl import random_get_hull, BIOnlineGeneration
-        from library.oragn_mask import get_five_key, mask_patch
-    seed = 42
-    random.seed(seed)
-    torch.manual_seed(seed)
-    np.random.seed(seed)
-    torch.cuda.manual_seed(seed)
-    torch.backends.cudnn.deterministic = True
-    torch.backends.cudnn.benchmark = False
-    # image_dataset = SBI_Dataset(phase='test', image_size=256)
-    # batch_size = 64
-    image_dataset = SBI_Dataset(phase='train', image_size=224, n_frames=2)
-    batch_size = 16
-    dataloader = torch.utils.data.DataLoader(image_dataset,
-                                             batch_size=batch_size,
-                                             shuffle=True,
-                                             collate_fn=image_dataset.collate_fn,
-                                             num_workers=0,
-                                             worker_init_fn=image_dataset.worker_init_fn
-                                             )
-    data_iter = iter(dataloader)
-    # next(data_iter)
-    # next(data_iter)
-    data = next(data_iter)
-    # print(data.keys())
-    # ### DEBUG
-    # for i in tqdm(range(300)):
-    #         data = next(data_iter)
-    # ###
-    print(data['label'])
-    # print(data['mask'].shape)
-    img = data['img']
-    map = data['map']
-    # print(img.keys())
-    img = img.view((-1, 3, 224, 224))
-    map = map.view((-1, 1, 196, 196))
-    # img_r = img[0, :, :, :]
-    # img_f = img[1, :, :, :]
-    utils.save_image(img, 'imgs/loader.png', nrow=batch_size,
-                     normalize=False, range=(0, 1))
-    # utils.save_image(img_r, 'debug/imgs/loader_real.png', nrow=batch_size,
-    #                  normalize=False, range=(0, 1))
-    # utils.save_image(img_f, 'debug/imgs/loader_fake.png', nrow=batch_size,
-    #                  normalize=False, range=(0, 1))
-    map_f = map[1, :, :]
-    utils.save_image(map, 'imgs/map.png', nrow=batch_size,
-                     normalize=False, range=(0, 1))
-    # utils.save_image(map_f, 'imgs/map_fake.png', nrow=batch_size,
-    #                  normalize=False, range=(0, 1))
-    # map_f_cpu = convert_consis(torch.squeeze(map_f).cpu().data.numpy())
-    # Image.fromarray(np.uint8(map_f_cpu*255)).save('imgs/consis_img.png')
-    if False:
-        mask_0 = data['mask']
-        for im in range(2):
-            row = 0
-            col = 0
-            test_mask = mask_0[im]
-            for i, mask_h in enumerate(test_mask):
-                for j, mask_w in enumerate(mask_h):
-                    mask_img = mask_w.detach().cpu().numpy()
-                    mask_img = Image.fromarray(np.uint8(mask_img * 255), 'L')
-                    mask_img.save(
-                        'imgs/PCL_16/4D_mask_{}_{}_{}.png'.format(im, row, col))
-                    col += 1
-                row += 1
-                col = 0
-        print("saved")
-    if False:
-        import matplotlib.pyplot as plt
-        for i in range(20):
-            data = next(data_iter)
-            # print(data.keys())
-            # print(data['label'])
-            img = data['img']
-            # print(img.keys())
-            img = img.view((-1, 3, 256, 256))
-            img_r = img[0, :, :, :]
-            img_f = img[1, :, :, :]
-            # utils.save_image(img, 'imgs/loader_haar_rand.png', nrow=batch_size,
-            #                  normalize=False, range=(0, 1))
-            utils.save_image(img_r, 'debug/imgs/loader_real.png', nrow=batch_size,
-                             normalize=False, range=(0, 1))
-            utils.save_image(img_f, 'debug/imgs/loader_fake.png', nrow=batch_size,
-                             normalize=False, range=(0, 1))
-
-            img = cv2.imread('debug/imgs/loader_real.png')
-            # img = cv2.imread('imgs/original_sequences_000_0.png')
-            # img = cv2.imread(r'H:\Academic\ustc_face_forgery\Dataset\FFIW\test_set_0104/source_val_00000039_0.png')
-            img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-            img0 = np.array(img).reshape(img.shape[0], img.shape[1], 3)
-            img = cv2.imread('debug/imgs/loader_fake.png')
-            # img = cv2.imread('imgs/NeuralTextures_000_003_0.png')
-            # img = cv2.imread(r'H:\Academic\ustc_face_forgery\Dataset\FFIW\test_set_0104/target_val_00000039_0.png')
-            img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-            img2 = np.array(img).reshape(img.shape[0], img.shape[1], 3)
-            filter1 = [[0, 0, 0, 0, 0],
-                       [0, -1, 2, -1, 0],
-                       [0, 2, -4, 2, 0],
-                       [0, -1, 2, -1, 0],
-                       [0, 0, 0, 0, 0]]
-            filter2 = [[-1, 2, -2, 2, -1],
-                       [2, -6, 8, -6, 2],
-                       [-2, 8, -12, 8, -2],
-                       [2, -6, 8, -6, 2],
-                       [-1, 2, -2, 2, -1]]
-            filter3 = [[0, 0, 0, 0, 0],
-                       [0, 0, 0, 0, 0],
-                       [0, 1, -2, 1, 0],
-                       [0, 0, 0, 0, 0],
-                       [0, 0, 0, 0, 0]]
-            filter1 = np.asarray(filter1, dtype=float) / 4.
-            filter2 = np.asarray(filter2, dtype=float) / 12.
-            filter3 = np.asarray(filter3, dtype=float) / 2.
-            # statck the filters
-            filters = [[filter1],  # , filter1, filter1],
-                       [filter2],  # , filter2, filter2],
-                       [filter3]]  # , filter3, filter3]]  # (3,3,5,5)
-            filters = np.array(filters)
-            # print(filters.shape)
-            filters = np.repeat(filters, 3, axis=1)
-            filters = torch.FloatTensor(filters)    # (3,3,5,5)
-            truc = nn.Hardtanh(-3, 3)
-            kernel = nn.Parameter(data=filters, requires_grad=False)
-            # conv = F.conv2d(kernel, stride=1, padding=2)
-            k = 0
-            plt.figure(figsize=(10, 5))
-            for img in [img0, img2]:
-
-                img_show = img.copy()
-                img = np.transpose(img, (2, 0, 1))
-                img = img[np.newaxis, :]
-                inp = torch.Tensor(img)
-                out0 = truc(F.conv2d(inp, kernel, stride=1,
-                            padding=2)).detach().numpy()
-                out1 = np.transpose(out0, (0, 2, 3, 1))[:, :, :, 0]
-                out2 = np.transpose(out0, (0, 2, 3, 1))[:, :, :, 1]
-                out3 = np.transpose(out0, (0, 2, 3, 1))[:, :, :, 2]
-                # 显示
-                plt.subplot(2, 4, 1 + 4*k)
-                plt.xticks([]), plt.yticks([])  # 去除坐标轴
-                plt.imshow(img_show.squeeze())
-                plt.subplot(2, 4, 2 + 4*k)
-                plt.xticks([]), plt.yticks([])  # 去除坐标轴
-                plt.imshow(out1.squeeze(), cmap='bwr')
-                plt.subplot(2, 4, 3 + 4*k)
-                plt.xticks([]), plt.yticks([])  # 去除坐标轴
-                plt.imshow(out2.squeeze(), cmap='bwr')
-                plt.subplot(2, 4, 4+4*k)
-                plt.xticks([]), plt.yticks([])  # 去除坐标轴
-                plt.imshow(out3.squeeze(), cmap='bwr')
-                k += 1
-                # plt.savefig("imgs/wavelet_{}.png".format(k))
-            plt.tight_layout()
-            plt.savefig("debug/wavelet/BI_{}.png".format(i))
-else:
-    from utils import blend as B
-    from .initialize import *
-    from .funcs import IoUfrom2bboxes, crop_face, RandomDownScale
-    if exist_bi:
-        from utils.library.vit_gen_pcl import random_get_hull, BIOnlineGeneration
-        from utils.library.oragn_mask import get_five_key, mask_patch
+    from torchinfo import summary
+    model = Vit_UIAv2_hDRMLPv2()
+    # print(model.vit_model.blocks)
+    # print(model)
+    image_size = 224
+    batch_size = 1
+    input_s = (batch_size, 3, image_size, image_size)
+    # summary(model, input_s)
+    dummy = torch.rand(batch_size, 3, image_size, image_size)
+    cls_token, consis_map = model(dummy)
+    print(consis_map.shape)
+    '''
+    for name, para in model.named_parameters():
+        # 除head, pre_logits外 其他权重全部冻结
+        if "head" not in name and "pre_logits" not in name:
+            para.requires_grad_(False)
+        else:
+            print("training {}".format(name))
+    '''

@@ -667,10 +667,11 @@ class VisionTransformer_uia_v3(nn.Module):
                  embed_dim=768, depth=12, num_heads=12, mlp_ratio=4.0, qkv_bias=True,
                  qk_scale=None, representation_size=None, distilled=False, drop_ratio=0.,
                  attn_drop_ratio=0., drop_path_ratio=0., embed_layer=PatchEmbed, norm_layer=None,
-                 act_layer=None, isEmbed=True, attn_list=[8,9,10,11]):
+                 act_layer=None, isEmbed=True, attn_list=[8,9,10,11],feat_block=5):
 
         super().__init__()
         self.attn_list = attn_list
+        self.feat_block_id = feat_block
         self.num_classes = num_classes
         # num_features for consistency with other models
         self.num_features = self.embed_dim = embed_dim
@@ -698,7 +699,9 @@ class VisionTransformer_uia_v3(nn.Module):
                      norm_layer=norm_layer, act_layer=act_layer)
             for i in range(depth)
         ])
+        self.attn_fusion = nn.Parameter(torch.ones([1,num_heads*len(attn_list)])/len(attn_list))
         self.norm = norm_layer(embed_dim)
+        self.norm_middle = norm_layer(embed_dim)
         self.isEmbed = isEmbed
         # Representation layer
         if representation_size and not distilled:
@@ -752,17 +755,21 @@ class VisionTransformer_uia_v3(nn.Module):
             else:
                 x, attn_map = blk(x)
                 attn_map_group.append(attn_map)
+            # 这里把选中的 block feat返回
+            if i == self.feat_block_id:
+                x_block = x   # [B,197,768]
         x = self.norm(x)
+        x_block = self.norm_middle(x_block)
         # x_block = x[:, 1:].reshape((x_block.size(0), int(x_block.size(1)**0.5), int(x_block.size(1)**0.5), x_block.size(2)))
         attn_block = torch.cat(attn_map_group, dim=1)
         if self.dist_token is None:
-            # 还需要返回其它[B,196,768]的特征token和attn_map
-            return self.pre_logits(x[:, 0]), x[:, 1:], attn_block
+            # 还需要返回其它[B,196,768]的特征token和attn_map(这里的block不一定是最后一层了)
+            return self.pre_logits(x[:, 0]), x[:,1:], x_block[:,1:], attn_block
         else:
             return x[:, 0], x[:, 1]
 
     def forward(self, x):
-        x, patch_token, attn_block = self.forward_features(x)
+        x, patch_token, patch_token_middle, attn_block = self.forward_features(x)
         if self.head_dist is not None:
             x, x_dist = self.head(x[0]), self.head_dist(x[1])
             if self.training and not torch.jit.is_scripting():
@@ -772,15 +779,20 @@ class VisionTransformer_uia_v3(nn.Module):
                 return (x + x_dist) / 2
         else:
             # patch token [B, 196, 768]
-            # B, PP, C = patch_token.shape
-            attn_qk_map_avg = torch.mean(attn_block, dim=1, keepdim=True)
-            attn_patch_qk_map = attn_qk_map_avg[:, :, 1:, 1:].squeeze(1) # 计算平均patch token之间的qk map [B,196,196]
-            attn_cls_qk_map = attn_qk_map_avg[:, :, 0, 1:]
-            localization_map = torch.sigmoid(attn_cls_qk_map) # 计算CLS和其它token的平均attn map [B,1,196],v3里用sigmoid
-            # localization_map = localization_map.reshape(B,1,PP) #.to(patch_token.device)
-            x = torch.cat([x, torch.bmm(localization_map, patch_token).squeeze(1)], -1) 
+            B, PP, C = patch_token.shape
+            _, total_head_num, ax_1, ax_2, = attn_block.shape
+            # #
+            # attn_qk_map_avg = torch.mean(attn_block, dim=1, keepdim=True)
+            # attn_qk_map_avg = torch.bmm(torch.softmax(self.attn_fusion, dim=-1).expand(B, -1, -1), attn_block.view(B,total_head_num,-1)).view(B,1,ax_1,ax_2) # 这里使用动态系数
+            # attn_patch_qk_map = attn_qk_map_avg[:, :, 1:, 1:].squeeze(1) # 平均patch token之间的qk map [B,196,196]
+            # attn_cls_qk_map = attn_qk_map_avg[:, :, 0, 1:]
+            # #
+            attn_cls_qk_map = torch.bmm(torch.softmax(self.attn_fusion, dim=-1).expand(B, -1, -1), attn_block[:, :, 0, 1:].view(B, total_head_num, -1)).view(B,1,-1) # 这里使用动态系数
+            localization_map = torch.sigmoid(attn_cls_qk_map).to(patch_token.device)/PP # 计算CLS和其它token的平均attn map [B,1,196],v3里用sigmoid # 与原论文一致，除PP
+            # localization_map = localization_map.reshape(B,1,PP) #.to(patch_token.device) /PP
+            x = torch.cat([x, (torch.bmm(localization_map, patch_token).squeeze(1))], -1) 
             x = self.head(x)
-        return x, attn_patch_qk_map
+        return x, patch_token_middle
 
 def _init_vit_weights(m):
     """
@@ -856,7 +868,7 @@ def vit_base_patch16_224_in21k_uia_v2(num_classes: int = 21843, has_logits: bool
     return model
 
 def vit_base_patch16_224_in21k_uia_v3(num_classes: int = 21843, has_logits: bool = True, isEmbed: bool = True, drop_ratio: float = 0.,
-                                           attn_drop_ratio: float = 0., drop_path_ratio: float = 0., keepEmbedWeight: bool = True,  attn_list: list = [8,9,10,11]):
+                                           attn_drop_ratio: float = 0., drop_path_ratio: float = 0., keepEmbedWeight: bool = True, attn_list: list = [8,9,10,11], feat_block: int = 5):
     model = VisionTransformer_uia_v3(img_size=224,
                                           patch_size=16,
                                           embed_dim=768,
@@ -867,7 +879,8 @@ def vit_base_patch16_224_in21k_uia_v3(num_classes: int = 21843, has_logits: bool
                                           drop_path_ratio=drop_path_ratio,
                                           representation_size=768 if has_logits else None,
                                           num_classes=num_classes, isEmbed=isEmbed,
-                                          attn_list=attn_list)
+                                          attn_list=attn_list,
+                                          feat_block=feat_block)
     if not keepEmbedWeight:
         del model.patch_embed
     weight_pth = 'src/jx_vit_base_patch16_224_in21k-e5005f0a.pth'
@@ -1021,15 +1034,22 @@ class Vit_UIAv2_hDRMLPv2(nn.Module):
         return cls_token
 
 class Vit_UIAv3_hDRMLPv2(nn.Module):
-    def __init__(self, weight_pth=None, attn_list=[6,8,10]):
+    def __init__(self, weight_pth=None, attn_list=[6,8,10], feat_block=5):
         super().__init__()
         self.vit_model = vit_base_patch16_224_in21k_uia_v3(
-            num_classes=2, has_logits=False, isEmbed=False, keepEmbedWeight=False, attn_list=attn_list)
+            num_classes=2, has_logits=False, isEmbed=False, keepEmbedWeight=False, attn_list=attn_list, feat_block=feat_block)
         self.custom_embed = hDRMLPv2_embed(weight_pth)
+        # consis-1
+        self.K = nn.Linear(768, 768)
+        self.Q = nn.Linear(768, 768)
+        self.scale = 768 ** -0.5
        
     def forward(self, x):
         x = self.custom_embed(x)
-        cls_token, consis_map = self.vit_model(x)
+        cls_token, patch_token_middle = self.vit_model(x)
+        # # consis-1
+        consis_map = (self.K(patch_token_middle) @
+                      self.Q(patch_token_middle).transpose(-2, -1)) * self.scale
         return cls_token, consis_map
 
     def test_time(self, x):
@@ -1039,7 +1059,7 @@ class Vit_UIAv3_hDRMLPv2(nn.Module):
     
 if __name__ == '__main__':
     from torchinfo import summary
-    model = Vit_UIAv2_hDRMLPv2()
+    model = Vit_UIAv3_hDRMLPv2()
     # print(model.vit_model.blocks)
     # print(model)
     image_size = 224

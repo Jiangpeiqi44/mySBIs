@@ -73,8 +73,8 @@ def main(args):
 
     seed = 42   # 默认 seed = 5
     seed_torch(seed)
-    torch.backends.cudnn.deterministic = True
-    torch.backends.cudnn.benchmark = False  # False
+    torch.backends.cudnn.deterministic = False
+    torch.backends.cudnn.benchmark = True  # False
     torch.backends.cuda.matmul.allow_tf32 = True
     torch.backends.cudnn.allow_tf32 = True
     device = torch.device('cuda')

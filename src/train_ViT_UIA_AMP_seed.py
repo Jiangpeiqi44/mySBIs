@@ -16,7 +16,7 @@ from utils.logs import log
 from utils.funcs import load_json
 from datetime import datetime
 from tqdm import tqdm
-from vit_uia_model import Vit_UIAv2_hDRMLPv2 as Net
+from vit_uia_model import Vit_UIAv3_hDRMLPv2 as Net
 from torch.cuda.amp import autocast as autocast, GradScaler
 import math
 
@@ -73,8 +73,8 @@ def main(args):
 
     seed = 42   # 默认 seed = 5
     seed_torch(seed)
-    torch.backends.cudnn.deterministic = True
-    torch.backends.cudnn.benchmark = False  # False
+    torch.backends.cudnn.deterministic = False
+    torch.backends.cudnn.benchmark = True  # False
     torch.backends.cuda.matmul.allow_tf32 = True
     torch.backends.cudnn.allow_tf32 = True
     device = torch.device('cuda')

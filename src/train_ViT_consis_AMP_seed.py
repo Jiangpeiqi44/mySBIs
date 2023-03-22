@@ -73,8 +73,8 @@ def main(args):
 
     seed = 42   # 默认 seed = 5
     seed_torch(seed)
-    torch.backends.cudnn.deterministic = False
-    torch.backends.cudnn.benchmark = True  # False
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False  # False
     torch.backends.cuda.matmul.allow_tf32 = True
     torch.backends.cudnn.allow_tf32 = True
     device = torch.device('cuda')
@@ -91,7 +91,8 @@ def main(args):
                                                collate_fn=train_dataset.collate_fn,
                                                num_workers=14,
                                                pin_memory=True,
-                                               drop_last=True
+                                               drop_last=True,
+                                               prefetch_factor=4
                                                )
     # ,worker_init_fn=train_dataset.worker_init_fn
     val_loader = torch.utils.data.DataLoader(val_dataset,
@@ -99,7 +100,8 @@ def main(args):
                                              shuffle=False,
                                              collate_fn=val_dataset.collate_fn,
                                              num_workers=14,
-                                             pin_memory=True
+                                             pin_memory=True,
+                                             prefetch_factor=4
                                              )
     # ,worker_init_fn=val_dataset.worker_init_fn
 
@@ -157,10 +159,13 @@ def main(args):
     last_val_auc = 0
     weight_dict = {}
     n_weight = 5
+    save_interval = 10 # 保存间隔
     # 添加针对loss最小的几组pth
-    last_val_loss = 0
     weight_dict_loss = {}
-    n_weight_loss = 1
+    n_weight_loss = 2
+    # 
+    last_val_loss = 0
+    
 
     for epoch in range(n_epoch):
         seed_torch(seed + epoch)
@@ -256,7 +261,7 @@ def main(args):
             last_val_auc = min([weight_dict[k] for k in weight_dict])
 
         # ## 针对loss最小添加筛选
-        if len(weight_dict_loss) < n_weight_loss and epoch/n_epoch >=0.25:
+        if len(weight_dict_loss) < n_weight_loss and (epoch+1)/n_epoch >=0.5:
             save_model_path = os.path.join(
                 save_path+'weights/', "{}_{:.4f}_MINloss.tar".format(epoch+1, val_loss/len(val_loader)))
             weight_dict_loss[save_model_path] = val_loss/len(val_loader)
@@ -268,7 +273,7 @@ def main(args):
             last_val_loss = max([weight_dict_loss[k]
                                 for k in weight_dict_loss])
 
-        elif val_loss/len(val_loader) <= last_val_loss and epoch/n_epoch >= 0.25:
+        elif val_loss/len(val_loader) <= last_val_loss and (epoch+1)/n_epoch >= 0.5:
             save_model_path = os.path.join(
                 save_path+'weights/', "{}_{:.4f}_MINloss.tar".format(epoch+1, val_loss/len(val_loader)))
             for k in weight_dict_loss:
@@ -287,13 +292,16 @@ def main(args):
                                 for k in weight_dict_loss])
 
         logger.info(log_text)
-    save_model_path = os.path.join(
-        save_path+'weights/', "{}_last.tar".format(epoch+1))
-    torch.save({
-        "model": model.state_dict(),
-        # "optimizer": model.optimizer.state_dict(),
-        "epoch": epoch
-    }, save_model_path)
+        
+        if  epoch % save_interval == 0 and (epoch+1)/n_epoch >= 0.5:
+         
+            save_model_path = os.path.join(
+                save_path+'weights/', "{}_{:.4f}_INT.tar".format(epoch+1, val_loss/len(val_loader)))
+            torch.save({
+                "model": model.state_dict(),
+                # "optimizer": model.optimizer.state_dict(),
+                "epoch": epoch
+            }, save_model_path)
 
 
 if __name__ == '__main__':

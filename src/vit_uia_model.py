@@ -594,7 +594,7 @@ class VisionTransformer_uia_v2(nn.Module):
         # Classifier head(s)
         # self.head = nn.Linear(
         #     self.num_features, num_classes) if num_classes > 0 else nn.Identity()
-        self.head_drop = nn.Dropout(p=0.15)
+        # self.head_drop = nn.Dropout(p=0.15)
         self.head = nn.Linear(embed_dim*2, num_classes) if num_classes > 0 else nn.Identity()
         self.head_dist = None
         if distilled:
@@ -659,7 +659,7 @@ class VisionTransformer_uia_v2(nn.Module):
             localization_map = torch.softmax(attn_cls_qk_map, dim=-1) # 计算CLS和其它token的平均attn map [B,1,196]
             # localization_map = localization_map.reshape(B,1,PP) #.to(patch_token.device)
             x = torch.cat([x, torch.bmm(localization_map, patch_token).squeeze(1)], -1) 
-            x = self.head(self.head_drop(x))
+            x = self.head(x)
         return x, attn_patch_qk_map
 
 class VisionTransformer_uia_v3(nn.Module):

@@ -16,7 +16,7 @@ from utils.logs import log
 from utils.funcs import load_json
 from datetime import datetime
 from tqdm import tqdm
-from vit_uia_model import Vit_UIA_hDRMLPv2 as Net
+from vit_uia_model import Vit_UIAv2_hDRMLPv2 as Net
 from torch.cuda.amp import autocast as autocast, GradScaler
 import math
 
@@ -261,7 +261,7 @@ def main(args):
             last_val_auc = min([weight_dict[k] for k in weight_dict])
 
         # ## 针对loss最小添加筛选
-        if len(weight_dict_loss) < n_weight_loss and epoch/n_epoch >=0.5:
+        if len(weight_dict_loss) < n_weight_loss and (epoch+1)/n_epoch >=0.5:
             save_model_path = os.path.join(
                 save_path+'weights/', "{}_{:.4f}_MINloss.tar".format(epoch+1, val_loss/len(val_loader)))
             weight_dict_loss[save_model_path] = val_loss/len(val_loader)
@@ -273,7 +273,7 @@ def main(args):
             last_val_loss = max([weight_dict_loss[k]
                                 for k in weight_dict_loss])
 
-        elif val_loss/len(val_loader) <= last_val_loss and epoch/n_epoch >= 0.5:
+        elif val_loss/len(val_loader) <= last_val_loss and (epoch+1)/n_epoch >= 0.5:
             save_model_path = os.path.join(
                 save_path+'weights/', "{}_{:.4f}_MINloss.tar".format(epoch+1, val_loss/len(val_loader)))
             for k in weight_dict_loss:
@@ -293,7 +293,7 @@ def main(args):
 
         logger.info(log_text)
         
-        if  epoch % save_interval == 0 and epoch/n_epoch >= 0.5:
+        if  epoch % save_interval == 0 and (epoch+1)/n_epoch >= 0.5:
          
             save_model_path = os.path.join(
                 save_path+'weights/', "{}_{:.4f}_INT.tar".format(epoch+1, val_loss/len(val_loader)))

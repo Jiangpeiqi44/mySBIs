@@ -699,7 +699,7 @@ class VisionTransformer_uia_v3(nn.Module):
                      norm_layer=norm_layer, act_layer=act_layer)
             for i in range(depth)
         ])
-        self.attn_fusion = nn.Parameter(torch.ones([1,num_heads*len(attn_list)])/len(attn_list))
+        self.attn_fusion = nn.Parameter(torch.ones([1,num_heads*len(attn_list)])/(num_heads*len(attn_list)))   # 这里初始化的有问题： 原始写法 torch.ones([1,num_heads*len(attn_list)])/len(attn_list)
         self.norm = norm_layer(embed_dim)
         self.norm_middle = norm_layer(embed_dim)
         self.isEmbed = isEmbed
@@ -1062,13 +1062,19 @@ if __name__ == '__main__':
     model = Vit_UIAv3_hDRMLPv2()
     # print(model.vit_model.blocks)
     # print(model)
-    image_size = 224
-    batch_size = 1
-    input_s = (batch_size, 3, image_size, image_size)
-    # summary(model, input_s)
-    dummy = torch.rand(batch_size, 3, image_size, image_size)
-    cls_token, consis_map = model(dummy)
-    print(consis_map.shape)
+    # image_size = 224
+    # batch_size = 1
+    # input_s = (batch_size, 3, image_size, image_size)
+    # # summary(model, input_s)
+    # dummy = torch.rand(batch_size, 3, image_size, image_size)
+    # cls_token, consis_map = model(dummy)
+    # print(consis_map.shape)
+    weight_name = 'output/a5000/ViT-hDRMLPv2-UIAv3-1/51_0.9897_val.tar'
+    cnn_sd = torch.load(weight_name)["model"]
+    # print(model.load_state_dict(cnn_sd))
+    model.eval()
+    attn_w = model.vit_model.attn_fusion
+    print(attn_w, torch.softmax(attn_w,dim=-1).data.numpy())
     '''
     for name, para in model.named_parameters():
         # 除head, pre_logits外 其他权重全部冻结

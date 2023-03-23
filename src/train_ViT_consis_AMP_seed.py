@@ -92,7 +92,7 @@ def main(args):
                                                num_workers=14,
                                                pin_memory=True,
                                                drop_last=True,
-                                               prefetch_factor=6
+                                               prefetch_factor=4
                                                )
     # ,worker_init_fn=train_dataset.worker_init_fn
     val_loader = torch.utils.data.DataLoader(val_dataset,
@@ -101,7 +101,7 @@ def main(args):
                                              collate_fn=val_dataset.collate_fn,
                                              num_workers=14,
                                              pin_memory=True,
-                                             prefetch_factor=6
+                                             prefetch_factor=4
                                              )
     # ,worker_init_fn=val_dataset.worker_init_fn
 

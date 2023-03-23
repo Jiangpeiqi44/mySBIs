@@ -782,12 +782,12 @@ class VisionTransformer_uia_v3(nn.Module):
             B, PP, C = patch_token.shape
             _, total_head_num, ax_1, ax_2, = attn_block.shape
             # #
-            # attn_qk_map_avg = torch.mean(attn_block, dim=1, keepdim=True)
+            attn_qk_map_avg = torch.mean(attn_block, dim=1, keepdim=True)
             # attn_qk_map_avg = torch.bmm(torch.softmax(self.attn_fusion, dim=-1).expand(B, -1, -1), attn_block.view(B,total_head_num,-1)).view(B,1,ax_1,ax_2) # 这里使用动态系数
-            # attn_patch_qk_map = attn_qk_map_avg[:, :, 1:, 1:].squeeze(1) # 平均patch token之间的qk map [B,196,196]
-            # attn_cls_qk_map = attn_qk_map_avg[:, :, 0, 1:]
+            attn_patch_qk_map = attn_qk_map_avg[:, :, 1:, 1:].squeeze(1) # 平均patch token之间的qk map [B,196,196]
+            attn_cls_qk_map = attn_qk_map_avg[:, :, 0, 1:]
             # #
-            attn_cls_qk_map = torch.bmm(torch.softmax(self.attn_fusion, dim=-1).expand(B, -1, -1), attn_block[:, :, 0, 1:].view(B, total_head_num, -1)).view(B,1,-1) # 这里使用动态系数
+            # attn_cls_qk_map = torch.bmm(torch.softmax(self.attn_fusion, dim=-1).expand(B, -1, -1), attn_block[:, :, 0, 1:].view(B, total_head_num, -1)).view(B,1,-1) # 这里使用动态系数
             localization_map = torch.sigmoid(attn_cls_qk_map).to(patch_token.device)/PP # 计算CLS和其它token的平均attn map [B,1,196],v3里用sigmoid # 与原论文一致，除PP
             # localization_map = localization_map.reshape(B,1,PP) #.to(patch_token.device) /PP
             x = torch.cat([x, (torch.bmm(localization_map, patch_token).squeeze(1))], -1) 

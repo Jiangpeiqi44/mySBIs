@@ -254,6 +254,11 @@ class BIOnlineGeneration():
             if self.stats == 'BI':
                 foreground_face = colorTransfer(
                     background_face, foreground_face, mask*255)
+                if np.random.rand() < 0.15:
+                    '''不增强and不blur 直接模拟边界'''
+                    self.not_aug_flag = True
+                    if np.random.rand() < 0.5:
+                        blur_flag = False
             elif self.stats == 'IBI':
                 # if np.random.rand() < 0.5:
                 #     foreground_face = colorTransfer(
@@ -281,8 +286,8 @@ class BIOnlineGeneration():
             else:
                 # blended_face, mask = wavelet_blend(
                 #     foreground_face, background_face, mask[:, :, 0])
-                # if np.random.rand() < 0.5 and self.not_aug_flag != True and x_ray_flag != True:
-                if False:
+                if np.random.rand() < 0.25 and self.not_aug_flag != True and x_ray_flag != True:
+                # if False:
                     x, y, w, h = cv2.boundingRect((mask[:,:,0]*255).astype(np.uint8))
                     center = (x+w//2, y+h//2)
                     blended_face = cv2.seamlessClone(foreground_face, background_face, (mask*255).astype(np.uint8), center, cv2.NORMAL_CLONE)

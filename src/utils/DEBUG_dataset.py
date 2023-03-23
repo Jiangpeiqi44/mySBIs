@@ -5,11 +5,11 @@
 # 3rd party softwares' licenses are noticed at https://github.com/mapooon/SelfBlendedImages/blob/master/LICENSE
 import torch.nn.functional as F
 import logging
-
+import math
 import torch
 from torchvision import datasets, transforms, utils
 from torch.utils.data import Dataset, IterableDataset
-
+from scipy.ndimage import binary_erosion, binary_dilation
 from glob import glob
 import os
 import numpy as np
@@ -19,7 +19,7 @@ import cv2
 from torch import nn
 import sys
 import albumentations as alb
-
+from skimage.transform import PiecewiseAffineTransform, warp
 from skimage.metrics import structural_similarity as compare_ssim
 import warnings
 import traceback
@@ -37,7 +37,7 @@ else:
 
 class SBI_Dataset(Dataset):
     def __init__(self, phase='train', image_size=224, n_frames=8):
-        # print('init SBI')
+
         assert phase in ['train', 'val', 'test']
 
         image_list, label_list = init_ff(phase, 'frame', n_frames=n_frames)
@@ -51,7 +51,7 @@ class SBI_Dataset(Dataset):
         print(f'SBI({phase}): {len(image_list)}')
 
         self.image_list = image_list
-        self.bi = BIOnlineGeneration()
+        self.bi = BIOnlineGeneration(phase=phase)
         self.image_size = (image_size, image_size)
         self.phase = phase
         self.n_frames = n_frames
@@ -64,10 +64,10 @@ class SBI_Dataset(Dataset):
     def __getitem__(self, idx):
         flag = True
         while flag:
-            # try:
+            try:
                 filename = self.image_list[idx]
-                # if np.random.rand() < 0.5:
-                if False:
+                if np.random.rand() < 0.75:
+                # if False:
                     # IBI与BI进行整合
 
                     # # 读取做背景图片的lm和bbox
@@ -89,8 +89,8 @@ class SBI_Dataset(Dataset):
                     landmark_bi = self.reorder_landmark(landmark_bi)
                     # # 通过IBI或BI方法混合
                     logging.disable(logging.FATAL)
-                    # if np.random.rand() < 0.5:
-                    if True:
+                    if np.random.rand() < 0.75:
+                    # if True:
                         # # BI方法
                         self.bi.stats = 'BI'
                     else:
@@ -100,7 +100,7 @@ class SBI_Dataset(Dataset):
                         # idt_dir = glob(filename[:-7]+'*')
                         idt_dir = glob(filename[0:filename.rfind('/')+1]+'*')
                         # windows的bug
-                        idt_dir = [i.replace('\\', '/') for i in idt_dir]
+                        # idt_dir = [i.replace('\\', '/') for i in idt_dir]
                         idt_dir = [idt_dir[i] for i in range(len(idt_dir)) if os.path.isfile(idt_dir[i].replace(
                             '/frames/', self.path_lm).replace('.png', '.npy')) and os.path.isfile(idt_dir[i].replace('/frames/', '/retina/').replace('.png', '.npy'))]
                         self.bi.ibi_data_list = idt_dir
@@ -139,7 +139,6 @@ class SBI_Dataset(Dataset):
                 
                 else:               
                     # # SBI
-                    print('SBI',np.random.rand(),np.random.rand(),np.random.rand(),np.random.rand(),np.random.rand(),np.random.rand())
                     img = np.array(Image.open(filename))
                     landmark = np.load(filename.replace(
                         '.png', '.npy').replace('/frames/', self.path_lm))[0]
@@ -166,28 +165,27 @@ class SBI_Dataset(Dataset):
 
                     img_r, img_f, mask_bi, mask = self.self_blending(
                         img.copy(), landmark.copy())
-                    
+
                     if self.phase == 'train':
                         transformed = self.transforms(image=img_f.astype(
                             'uint8'), image1=img_r.astype('uint8'))
                         img_f = transformed['image']
                         img_r = transformed['image1']
 
-                    
                     img_f, landmark_last, __, ___, y0_new, y1_new, x0_new, x1_new = crop_face(
                         img_f, landmark, bbox, margin=False, crop_by_bbox=True, abs_coord=True, phase=self.phase)
-                 
+
                     img_r = img_r[y0_new:y1_new, x0_new:x1_new]
                     mask = mask[y0_new:y1_new, x0_new:x1_new]
                     mask_bi = mask_bi[y0_new:y1_new, x0_new:x1_new]
-    
-                
+                    
+
                 
                 # if self.phase == 'train' and np.random.rand() < 0.5:
                 if False:
                     # ## 进行基于SSIM的动态增强
                     ssim_score, ssim_map = compare_ssim(
-                        img_r, img_f, data_range=255, channel_axis=2, full=True)
+                    img_r, img_f, data_range=255, channel_axis=2, full=True)
                     ssim_map = ssim_map.mean(axis=2)
                     landmark = landmark_last
                     mask_area = np.sum(mask_bi > 0)
@@ -256,98 +254,35 @@ class SBI_Dataset(Dataset):
                 img_f = img_f.transpose((2, 0, 1))
                 img_r = img_r.transpose((2, 0, 1))
 
-                map_shape = 14  # 224/16 = 14
-                
                 # # 基于SSIM的一致性Map生成
+                map_shape = 14  # 224/16 = 14
                 # ssim_patch = np.zeros((map_shape, map_shape))
                 # ssim_map = cv2.resize(
-                #     ssim_map, self.image_size, interpolation=cv2.INTER_LINEAR).astype('float32')
+                #     ssim_map, self.image_size, interpolation=cv2.INTER_AREA).astype('float32')
                 # for i in range(map_shape):
                 #     for j in range(map_shape):
                 #         ssim_patch[i, j] = (
                 #             ssim_map[16*i:16*(i+1), 16*j:16*(j+1)]).mean()
 
                 mask_f = cv2.resize(
-                    mask, (map_shape, map_shape), interpolation=cv2.INTER_AREA).astype('float32')
+                    mask, (map_shape, map_shape), interpolation=cv2.INTER_LINEAR).astype('float32')
 
-                mask_r = np.ones((196, 196))
-                mask_f = self.Consistency2D(mask_f) # ssim_patch，mask_f(1-ssim_patch)
+                mask_r = np.ones((196, 196),dtype='float32')
+                mask_f = self.Consistency2D(mask_f)  # ssim_patch，mask_f
 
                 flag = False
-            # except Exception as e:
-            #     print(e)
-            #     print(idx)
-            #     print(filename)
-            #     traceback.print_exc()
-            #     idx = torch.randint(low=0, high=len(self), size=(1,)).item()
+            except Exception as e:
+                print(e)
+                # print(idx)
+                # traceback.print_exc()
+                idx = torch.randint(low=0, high=len(self), size=(1,)).item()
 
         return img_f, img_r, mask_f, mask_r
 
-    # ## 核心混合代码
-    def self_blending(self, img, landmark):
-        H, W = len(img), len(img[0])
-
-        if np.random.rand() < 0.25:
-            landmark = landmark[:68]
-            
-        # if np.random.rand() < 0.75:
-        if True:
-            # 执行标准SBI
-            if exist_bi:
-                logging.disable(logging.FATAL)
-                mask = random_get_hull(landmark, img)[:, :, 0]
-                logging.disable(logging.NOTSET)
-            else:
-                mask = np.zeros_like(img[:, :, 0])
-                cv2.fillConvexPoly(mask, cv2.convexHull(landmark), 1.)
-
-            source = img.copy()
-            # ##随机对源或目标进行变换
-            if np.random.rand() < 0.5:
-                source = self.source_transforms(
-                    image=source.astype(np.uint8))['image']
-            else:
-                img = self.source_transforms(image=img.astype(np.uint8))['image']
-
-            if True:  # SBI原始方法
-                source, mask = self.randaffine(source, mask)
-                mask_bi = mask.copy()
-                mask_bi = mask_bi.reshape(mask_bi.shape+(1,))
-                img_blended, mask = B.dynamic_blend(source, img, mask)
-            else:  # 小波方法
-                if np.random.rand() < 0.5:
-                    source, mask = self.randaffine_haar(source, mask)
-                else:
-                    source, mask = self.randaffine(source, mask)
-                mask_ret = mask.copy()
-                img_blended, mask = B.haar_blend(source, img, mask)
-        else:
-            # 执行随机五官区域
-            five_key = get_five_key(landmark)
-            # reg = np.random.randint(0, 10)
-            reg = 4
-            # 得到deform后的mask
-            mask, mask_bi = mask_patch(reg, img, five_key)
-            source = img.copy()
-            # ##随机对源或目标进行变换
-            if np.random.rand() < 0.5:
-                source = self.source_transforms(
-                    image=source.astype(np.uint8))['image']
-            else:
-                img = self.source_transforms(image=img.astype(np.uint8))['image']
-            # 直接混合
-            img_blended = (mask * source + (1 - mask) * img)
-            
-        img_blended = img_blended.astype(np.uint8)
-        img = img.astype(np.uint8)
-
-        return img, img_blended, mask_bi, mask
-    
     def Consistency2D(self, mask):
-        real_mask = mask.flatten()  # shape like [1,196]
-        real_mask = real_mask.reshape((1,)+real_mask.shape)
+        real_mask = mask.reshape(1, -1)
         consis_map = [np.squeeze(1 - abs(m - real_mask))
-                      for m in real_mask[0, :]]
+                      for m in real_mask[0,:]]
         return np.array(consis_map)
 
     def get_source_transforms(self):
@@ -427,6 +362,66 @@ class SBI_Dataset(Dataset):
         mask = transformed['mask']
         return img, mask
     
+    # ## 核心混合代码
+    def self_blending(self, img, landmark):
+        H, W = len(img), len(img[0])
+
+        if np.random.rand() < 0.25:
+            landmark = landmark[:68]
+            
+        # if np.random.rand() < 0.75:
+        if True:
+            # 执行标准SBI
+            if exist_bi:
+                logging.disable(logging.FATAL)
+                mask = random_get_hull(landmark, img)[:, :, 0]
+                logging.disable(logging.NOTSET)
+            else:
+                mask = np.zeros_like(img[:, :, 0])
+                cv2.fillConvexPoly(mask, cv2.convexHull(landmark), 1.)
+
+            source = img.copy()
+            # ##随机对源或目标进行变换
+            if np.random.rand() < 0.5:
+                source = self.source_transforms(
+                    image=source.astype(np.uint8))['image']
+            else:
+                img = self.source_transforms(image=img.astype(np.uint8))['image']
+
+            if True:  # SBI原始方法
+                source, mask = self.randaffine(source, mask)
+                mask_bi = mask.copy()
+                mask_bi = mask_bi.reshape(mask_bi.shape+(1,))
+                img_blended, mask = B.dynamic_blend(source, img, mask)
+            else:  # 小波方法
+                if np.random.rand() < 0.5:
+                    source, mask = self.randaffine_haar(source, mask)
+                else:
+                    source, mask = self.randaffine(source, mask)
+                mask_ret = mask.copy()
+                img_blended, mask = B.haar_blend(source, img, mask)
+        else:
+            # 执行随机五官区域
+            five_key = get_five_key(landmark)
+            # reg = np.random.randint(0, 10)
+            reg = 4 # 只换嘴部
+            # 得到deform后的mask
+            mask, mask_bi = mask_patch(reg, img, five_key)
+            source = img.copy()
+            # ##随机对源或目标进行变换
+            if np.random.rand() < 0.5:
+                source = self.source_transforms(
+                    image=source.astype(np.uint8))['image']
+            else:
+                img = self.source_transforms(image=img.astype(np.uint8))['image']
+            # 直接混合
+            img_blended = (mask * source + (1 - mask) * img)
+            
+        img_blended = img_blended.astype(np.uint8)
+        img = img.astype(np.uint8)
+
+        return img, img_blended, mask_bi, mask
+
     def reorder_landmark(self, landmark):
         landmark_add = np.zeros((13, 2))
         for idx, idx_l in enumerate([77, 75, 76, 68, 69, 70, 71, 80, 72, 73, 79, 74, 78]):
@@ -509,6 +504,8 @@ class SBI_Dataset(Dataset):
 
     def worker_init_fn(self, worker_id):
         np.random.seed(np.random.get_state()[1][0] + worker_id)
+        # # worker_seed = torch.initial_seed() % 2**32
+        # # np.random.seed(worker_seed)
 
 def convert_consis(map):
     assert map.shape==(196,196)
@@ -531,7 +528,7 @@ if __name__ == '__main__':
     if exist_bi:
         from library.vit_gen_pcl import random_get_hull, BIOnlineGeneration
         from library.oragn_mask import get_five_key, mask_patch
-    seed = 49
+    seed = 42
     random.seed(seed)
     torch.manual_seed(seed)
     np.random.seed(seed)
@@ -541,7 +538,7 @@ if __name__ == '__main__':
     # image_dataset = SBI_Dataset(phase='test', image_size=256)
     # batch_size = 64
     image_dataset = SBI_Dataset(phase='train', image_size=224, n_frames=2)
-    batch_size = 4
+    batch_size = 16
     dataloader = torch.utils.data.DataLoader(image_dataset,
                                              batch_size=batch_size,
                                              shuffle=True,
@@ -552,16 +549,12 @@ if __name__ == '__main__':
     data_iter = iter(dataloader)
     # next(data_iter)
     # next(data_iter)
-    import time
-    start = time.time()
     data = next(data_iter)
-    end = time.time()
-    print(end - start, 's')
     # print(data.keys())
-    ## DEBUG
+    # ### DEBUG
     # for i in tqdm(range(300)):
-            # data = next(data_iter)
-    ##
+    #         data = next(data_iter)
+    # ###
     print(data['label'])
     # print(data['mask'].shape)
     img = data['img']
@@ -569,21 +562,37 @@ if __name__ == '__main__':
     # print(img.keys())
     img = img.view((-1, 3, 224, 224))
     map = map.view((-1, 1, 196, 196))
-    img_r = img[0, :, :, :]
-    img_f = img[1, :, :, :]
+    # img_r = img[0, :, :, :]
+    # img_f = img[1, :, :, :]
     utils.save_image(img, 'imgs/loader.png', nrow=batch_size,
                      normalize=False, range=(0, 1))
-    utils.save_image(img_r, 'imgs/loader_real.png', nrow=batch_size,
-                     normalize=False, range=(0, 1))
-    utils.save_image(img_f, 'imgs/loader_fake.png', nrow=batch_size,
-                     normalize=False, range=(0, 1))
+    # utils.save_image(img_r, 'debug/imgs/loader_real.png', nrow=batch_size,
+    #                  normalize=False, range=(0, 1))
+    # utils.save_image(img_f, 'debug/imgs/loader_fake.png', nrow=batch_size,
+    #                  normalize=False, range=(0, 1))
     map_f = map[1, :, :]
     utils.save_image(map, 'imgs/map.png', nrow=batch_size,
                      normalize=False, range=(0, 1))
-    utils.save_image(map_f, 'imgs/map_fake.png', nrow=batch_size,
-                     normalize=False, range=(0, 1))
-    map_f_cpu = convert_consis(torch.squeeze(map_f).cpu().data.numpy())
-    Image.fromarray(np.uint8(map_f_cpu*255)).save('imgs/consis_img.png')
+    # utils.save_image(map_f, 'imgs/map_fake.png', nrow=batch_size,
+    #                  normalize=False, range=(0, 1))
+    # map_f_cpu = convert_consis(torch.squeeze(map_f).cpu().data.numpy())
+    # Image.fromarray(np.uint8(map_f_cpu*255)).save('imgs/consis_img.png')
+    if False:
+        mask_0 = data['mask']
+        for im in range(2):
+            row = 0
+            col = 0
+            test_mask = mask_0[im]
+            for i, mask_h in enumerate(test_mask):
+                for j, mask_w in enumerate(mask_h):
+                    mask_img = mask_w.detach().cpu().numpy()
+                    mask_img = Image.fromarray(np.uint8(mask_img * 255), 'L')
+                    mask_img.save(
+                        'imgs/PCL_16/4D_mask_{}_{}_{}.png'.format(im, row, col))
+                    col += 1
+                row += 1
+                col = 0
+        print("saved")
     if False:
         import matplotlib.pyplot as plt
         for i in range(20):
@@ -595,17 +604,19 @@ if __name__ == '__main__':
             img = img.view((-1, 3, 256, 256))
             img_r = img[0, :, :, :]
             img_f = img[1, :, :, :]
-            utils.save_image(img_r, 'imgs/loader_real.png', nrow=batch_size,
+            # utils.save_image(img, 'imgs/loader_haar_rand.png', nrow=batch_size,
+            #                  normalize=False, range=(0, 1))
+            utils.save_image(img_r, 'debug/imgs/loader_real.png', nrow=batch_size,
                              normalize=False, range=(0, 1))
-            utils.save_image(img_f, 'imgs/loader_fake.png', nrow=batch_size,
+            utils.save_image(img_f, 'debug/imgs/loader_fake.png', nrow=batch_size,
                              normalize=False, range=(0, 1))
 
-            img = cv2.imread('imgs/loader_real.png')
+            img = cv2.imread('debug/imgs/loader_real.png')
             # img = cv2.imread('imgs/original_sequences_000_0.png')
             # img = cv2.imread(r'H:\Academic\ustc_face_forgery\Dataset\FFIW\test_set_0104/source_val_00000039_0.png')
             img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
             img0 = np.array(img).reshape(img.shape[0], img.shape[1], 3)
-            img = cv2.imread('imgs/loader_fake.png')
+            img = cv2.imread('debug/imgs/loader_fake.png')
             # img = cv2.imread('imgs/NeuralTextures_000_003_0.png')
             # img = cv2.imread(r'H:\Academic\ustc_face_forgery\Dataset\FFIW\test_set_0104/target_val_00000039_0.png')
             img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)

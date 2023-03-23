@@ -257,6 +257,7 @@ class BIOnlineGeneration():
                 if np.random.rand() < 0.15:
                     '''不增强and不blur 直接模拟边界'''
                     self.not_aug_flag = True
+                    blend_ratio = 1
                     if np.random.rand() < 0.5:
                         blur_flag = False
             elif self.stats == 'IBI':
@@ -266,6 +267,7 @@ class BIOnlineGeneration():
                 if np.random.rand() < 0.15:
                     '''不增强and不blur 直接模拟边界'''
                     self.not_aug_flag = True
+                    blend_ratio = 1
                     if np.random.rand() < 0.5:
                         blur_flag = False
                 # elif np.random.rand() < 0.15:

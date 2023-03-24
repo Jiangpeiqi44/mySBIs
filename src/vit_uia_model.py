@@ -1039,7 +1039,7 @@ class Vit_UIAv2_hDRMLPv2(nn.Module):
         return cls_token
 
 class Vit_UIAv3_hDRMLPv2(nn.Module):
-    def __init__(self, weight_pth=None, attn_list=[6,8,10], feat_block=5):
+    def __init__(self, weight_pth=None, attn_list=[8,9,10], feat_block=7):
         super().__init__()
         self.vit_model = vit_base_patch16_224_in21k_uia_v3(
             num_classes=2, has_logits=False, isEmbed=False, keepEmbedWeight=False, attn_list=attn_list, feat_block=feat_block)

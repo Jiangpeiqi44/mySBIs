@@ -670,6 +670,7 @@ class VisionTransformer_uia_v3(nn.Module):
                  act_layer=None, isEmbed=True, attn_list=[8,9,10,11],feat_block=5):
 
         super().__init__()
+        self.scale = 768 ** -0.5
         self.attn_list = attn_list
         self.feat_block_id = feat_block
         self.num_classes = num_classes
@@ -783,9 +784,14 @@ class VisionTransformer_uia_v3(nn.Module):
         else:
             # patch token [B, 196, 768]
             B, PP, C = patch_token.shape
-            localization_map = torch.sigmoid(torch.mean(attn_block[:, :, 0, 1:], dim=1))
+            localization_map = torch.sigmoid(torch.mean(attn_block[:, :, 0, 1:], dim=1) * self.scale) # 这里多加一个scale
             localization_map = localization_map.reshape(B,1,PP)/PP  #.to(patch_token.device)
             x = torch.cat([x, torch.bmm(localization_map, self.patch_lin_prj(patch_token)).squeeze(1)], -1) 
+            # # 添加平均attn map的多样性损失
+            ## 先计算每层的平均map
+            # attn_patch_multi_head = torch.mean(attn_block[:, :, 1:, 1:].reshape(
+            #     B, self.num_heads, -1, PP, PP), dim=2)   # [B,12,196,196]
+            # attn_patch_multi_head.softmax(dim=-1)
             # _, total_head_num, ax_1, ax_2, = attn_block.shape   # [B,head_nums*block_num,197,197]  CLS [B,head_nums*block_num,196]
             # # 原始方法
             # attn_qk_map_avg = torch.mean(attn_block, dim=1, keepdim=True)
@@ -810,6 +816,7 @@ class VisionTransformer_uia_v4(nn.Module):
                  act_layer=None, isEmbed=True, attn_list=[8,9,10,11]):
 
         super().__init__()
+        self.scale = 768 ** -0.5
         self.attn_list = attn_list
         self.num_classes = num_classes
         # num_features for consistency with other models

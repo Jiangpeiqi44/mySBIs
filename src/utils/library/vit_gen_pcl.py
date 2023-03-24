@@ -139,7 +139,7 @@ class BIOnlineGeneration():
             for k, v in self.landmarks_record.items():
                 self.landmarks_record[k] = np.array(v)
                 self.data_list.append(k)
-        self.k_num = floor(0.1*len(self.data_list))
+        self.k_num = floor(0.125*len(self.data_list))
         # extract all frame from all video in the name of {videoid}_{frameid}
         self.source_transforms = self.get_source_transforms()
         # self.base_path = 'H:/Academic/ustc_face_forgery/Dataset/FF++/original_sequences/youtube/raw/frames/'
@@ -166,8 +166,8 @@ class BIOnlineGeneration():
 
         face_img, mask_bi, mask = self.get_blended_face(background_face_path)
         
-        if self.not_aug_flag:
-            mask = (1 - mask) * mask * 4
+        # if self.not_aug_flag:
+        #     mask = (1 - mask) * mask * 4
 
         return face_img, mask_bi, mask
 
@@ -230,9 +230,9 @@ class BIOnlineGeneration():
             #     if np.random.rand() < 0.1:
             #          x_ray_flag = True
 
-            # if np.random.rand() < 0.5:
+            if np.random.rand() < 0.5:
             # if True:
-            if False:
+            # if False:
                 foreground_face, background_face = resize_to_match(foreground_face, background_face)
                 match_flag = 0
             else:
@@ -254,20 +254,13 @@ class BIOnlineGeneration():
             if self.stats == 'BI':
                 foreground_face = colorTransfer(
                     background_face, foreground_face, mask*255)
-                if np.random.rand() < 0.15:
-                    '''不增强and不blur 直接模拟边界'''
-                    self.not_aug_flag = True
-                    blend_ratio = 1
-                    if np.random.rand() < 0.5:
-                        blur_flag = False
             elif self.stats == 'IBI':
-                # if np.random.rand() < 0.5:
-                #     foreground_face = colorTransfer(
-                #         background_face, foreground_face, mask*255)     
+                if np.random.rand() < 0.5:
+                    foreground_face = colorTransfer(
+                        background_face, foreground_face, mask*255)     
                 if np.random.rand() < 0.15:
                     '''不增强and不blur 直接模拟边界'''
                     self.not_aug_flag = True
-                    blend_ratio = 1
                     if np.random.rand() < 0.5:
                         blur_flag = False
                 # elif np.random.rand() < 0.15:
@@ -288,8 +281,7 @@ class BIOnlineGeneration():
             else:
                 # blended_face, mask = wavelet_blend(
                 #     foreground_face, background_face, mask[:, :, 0])
-                if np.random.rand() < 0.25 and self.not_aug_flag != True and x_ray_flag != True:
-                # if False:
+                if np.random.rand() < 0.5 and self.not_aug_flag != True and x_ray_flag != True:
                     x, y, w, h = cv2.boundingRect((mask[:,:,0]*255).astype(np.uint8))
                     center = (x+w//2, y+h//2)
                     blended_face = cv2.seamlessClone(foreground_face, background_face, (mask*255).astype(np.uint8), center, cv2.NORMAL_CLONE)

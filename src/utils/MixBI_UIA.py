@@ -266,10 +266,10 @@ class SBI_Dataset(Dataset):
 
                 mask_f = cv2.resize(
                     mask, (map_shape, map_shape), interpolation=cv2.INTER_AREA).astype('float32')
-
+                mask_x_ray_f = 4 * mask_f * (1 - mask_f)
                 mask_r = np.ones((196, 196),dtype='float32')
                 mask_f = self.Consistency2D(mask_f)  # ssim_patch，mask_f
-
+                mask_x_ray_f = self.Consistency2D(mask_x_ray_f)
                 flag = False
             except Exception as e:
                 print(e)
@@ -277,7 +277,7 @@ class SBI_Dataset(Dataset):
                 # traceback.print_exc()
                 idx = torch.randint(low=0, high=len(self), size=(1,)).item()
 
-        return img_f, img_r, mask_f, mask_r
+        return img_f, img_r, mask_f, mask_r ,mask_x_ray_f
 
     def Consistency2D(self, mask):
         real_mask = mask.flatten()  # shape like [1,196]
@@ -494,13 +494,15 @@ class SBI_Dataset(Dataset):
         return img, mask, landmark_new, bbox_new
 
     def collate_fn(self, batch):
-        img_f, img_r, mask_f, mask_r = zip(*batch)
+        img_f, img_r, mask_f, mask_r, mask_x_ray_f = zip(*batch)
         data = {}
         data['img'] = torch.cat(
             [torch.tensor(img_r).float(), torch.tensor(img_f).float()], 0)
         data['label'] = torch.tensor([0]*len(img_r)+[1]*len(img_f))
         data['map'] = torch.cat(
             [torch.tensor(mask_r).float(), torch.tensor(mask_f).float()], 0)
+        data['map_x_ray'] = torch.cat(
+            [torch.tensor(mask_r).float(), torch.tensor(mask_x_ray_f).float()], 0)
         return data
 
     def worker_init_fn(self, worker_id):
@@ -539,7 +541,7 @@ if __name__ == '__main__':
     # image_dataset = SBI_Dataset(phase='test', image_size=256)
     # batch_size = 64
     image_dataset = SBI_Dataset(phase='train', image_size=224, n_frames=2)
-    batch_size = 16
+    batch_size = 1
     dataloader = torch.utils.data.DataLoader(image_dataset,
                                              batch_size=batch_size,
                                              shuffle=True,
@@ -559,7 +561,7 @@ if __name__ == '__main__':
     print(data['label'])
     # print(data['mask'].shape)
     img = data['img']
-    map = data['map']
+    map = data['map_x_ray']
     # print(img.keys())
     img = img.view((-1, 3, 224, 224))
     map = map.view((-1, 1, 196, 196))
@@ -576,8 +578,8 @@ if __name__ == '__main__':
                      normalize=False, range=(0, 1))
     # utils.save_image(map_f, 'imgs/map_fake.png', nrow=batch_size,
     #                  normalize=False, range=(0, 1))
-    # map_f_cpu = convert_consis(torch.squeeze(map_f).cpu().data.numpy())
-    # Image.fromarray(np.uint8(map_f_cpu*255)).save('imgs/consis_img.png')
+    map_f_cpu = convert_consis(torch.squeeze(map_f).cpu().data.numpy())
+    Image.fromarray(np.uint8(map_f_cpu*255)).save('imgs/consis_img.png')
     if False:
         mask_0 = data['mask']
         for im in range(2):

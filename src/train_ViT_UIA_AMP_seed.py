@@ -8,7 +8,7 @@ import warnings
 # from utils.ibi_wavelet import SBI_Dataset
 # from utils.bi_wavelet import SBI_Dataset
 # from utils.sbi_default import SBI_Dataset
-from utils.MixBI_Map import SBI_Dataset
+from utils.MixBI_UIA import SBI_Dataset
 from utils.scheduler import LinearDecayLR
 from sklearn.metrics import confusion_matrix, roc_auc_score
 import argparse
@@ -155,7 +155,7 @@ def main(args):
 
     criterion = nn.CrossEntropyLoss()
     criterionMap = nn.BCEWithLogitsLoss() #nn.BCELoss()
-    lbda = 2
+    lbda = 1
     last_auc = 0
     last_val_auc = 0
     weight_dict = {}
@@ -177,12 +177,14 @@ def main(args):
             img = data['img'].to(device, non_blocking=True).float()
             target = data['label'].to(device, non_blocking=True).long()
             target_map = data['map'].to(device, non_blocking=True).float()
+            target_map_x_ray = data['map_x_ray'].to(device, non_blocking=True).float()
             optimizer.zero_grad()
             with autocast():
-                output, map = model(img)
+                output, map, map_x_ray = model(img)
                 loss_cls = criterion(output, target)
                 loss_map = criterionMap(map, target_map)
-                loss = loss_cls + lbda*loss_map
+                loss_map_x_ray = criterionMap(map_x_ray, target_map_x_ray)
+                loss = loss_cls + lbda*loss_map + lbda*loss_map_x_ray
             # loss.backward()
             # optimizer.step()
             scaler.scale(loss).backward()

@@ -1,5 +1,4 @@
 # import dlib
-from math import floor
 from skimage import io
 # from skimage import transform as sktransform
 import numpy as np
@@ -139,7 +138,7 @@ class BIOnlineGeneration():
             for k, v in self.landmarks_record.items():
                 self.landmarks_record[k] = np.array(v)
                 self.data_list.append(k)
-        self.k_num = floor(0.125*len(self.data_list))
+
         # extract all frame from all video in the name of {videoid}_{frameid}
         self.source_transforms = self.get_source_transforms()
         # self.base_path = 'H:/Academic/ustc_face_forgery/Dataset/FF++/original_sequences/youtube/raw/frames/'
@@ -230,9 +229,8 @@ class BIOnlineGeneration():
             #     if np.random.rand() < 0.1:
             #          x_ray_flag = True
 
-            if np.random.rand() < 0.5:
-            # if True:
-            # if False:
+            # if np.random.rand() < 0.25:
+            if True:
                 foreground_face, background_face = resize_to_match(foreground_face, background_face)
                 match_flag = 0
             else:
@@ -255,9 +253,8 @@ class BIOnlineGeneration():
                 foreground_face = colorTransfer(
                     background_face, foreground_face, mask*255)
             elif self.stats == 'IBI':
-                if np.random.rand() < 0.5:
-                    foreground_face = colorTransfer(
-                        background_face, foreground_face, mask*255)     
+                foreground_face = colorTransfer(
+                    background_face, foreground_face, mask*255)     
                 if np.random.rand() < 0.15:
                     '''不增强and不blur 直接模拟边界'''
                     self.not_aug_flag = True
@@ -327,7 +324,7 @@ class BIOnlineGeneration():
         min_dist = 99999999
         if self.stats == 'BI':
             # random sample 5000 frame from all frams:
-            all_candidate_path = random.sample(self.data_list, k=self.k_num)  # 2500
+            all_candidate_path = random.sample(self.data_list, k=2500)
 
             # filter all frame that comes from the same video as background face
             all_candidate_path = filter(lambda k: name_resolve(k)[
@@ -339,7 +336,7 @@ class BIOnlineGeneration():
             all_candidate_path = filter(
                 lambda k: k != background_face_path, all_candidate_path)
             all_candidate_path = list(all_candidate_path)
-            all_candidate_path = random.sample(all_candidate_path, k=5) # BUG HERE! 已经FIX
+            all_candidate_path = random.sample(all_candidate_path, k=5) # BUG HERE!
             all_candidate_path = ['{}_{}'.format(
                 vid_id, os.path.basename(i)) for i in all_candidate_path]
         else:
@@ -475,7 +472,6 @@ def resize_to_match(source, target):
             source, (w, h), interpolation=cv2.INTER_LINEAR).astype('uint8')
     return source, target
 def align_to_match(source, target):
-    # 输入 foreground background mask与backgroundshape一致
     if source.shape != target.shape:
         # 这里进行对齐，而不是直接reshape
         h1, w1, _ = target.shape

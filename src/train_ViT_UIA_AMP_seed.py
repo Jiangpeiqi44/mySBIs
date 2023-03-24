@@ -90,19 +90,19 @@ def main(args):
                                                batch_size=batch_size//2,
                                                shuffle=True,
                                                collate_fn=train_dataset.collate_fn,
-                                               num_workers=14,
+                                               num_workers=13,
                                                pin_memory=True,
                                                drop_last=True,
-                                               prefetch_factor=4
+                                               prefetch_factor=2
                                                )
     # ,worker_init_fn=train_dataset.worker_init_fn
     val_loader = torch.utils.data.DataLoader(val_dataset,
                                              batch_size=batch_size,
                                              shuffle=False,
                                              collate_fn=val_dataset.collate_fn,
-                                             num_workers=14,
+                                             num_workers=13,
                                              pin_memory=True,
-                                             prefetch_factor=4
+                                             prefetch_factor=2
                                              )
     # ,worker_init_fn=val_dataset.worker_init_fn
 
@@ -163,7 +163,7 @@ def main(args):
     save_interval = 10 # 保存间隔
     # 添加针对loss最小的几组pth
     weight_dict_loss = {}
-    n_weight_loss = 2
+    n_weight_loss = 1
     # 
     last_val_loss = 0
     

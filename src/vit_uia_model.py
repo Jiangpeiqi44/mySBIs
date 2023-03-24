@@ -673,6 +673,7 @@ class VisionTransformer_uia_v3(nn.Module):
         self.attn_list = attn_list
         self.feat_block_id = feat_block
         self.num_classes = num_classes
+        self.num_heads = num_heads
         # num_features for consistency with other models
         self.num_features = self.embed_dim = embed_dim
         self.num_tokens = 2 if distilled else 1
@@ -703,6 +704,7 @@ class VisionTransformer_uia_v3(nn.Module):
         self.norm = norm_layer(embed_dim)
         self.norm_middle = norm_layer(embed_dim)
         self.isEmbed = isEmbed
+        self.patch_lin_prj = nn.Linear(embed_dim, embed_dim)
         # Representation layer
         if representation_size and not distilled:
             self.has_logits = True
@@ -780,17 +782,20 @@ class VisionTransformer_uia_v3(nn.Module):
         else:
             # patch token [B, 196, 768]
             B, PP, C = patch_token.shape
-            _, total_head_num, ax_1, ax_2, = attn_block.shape
-            # #
-            attn_qk_map_avg = torch.mean(attn_block, dim=1, keepdim=True)
-            # attn_qk_map_avg = torch.bmm(torch.softmax(self.attn_fusion, dim=-1).expand(B, -1, -1), attn_block.view(B,total_head_num,-1)).view(B,1,ax_1,ax_2) # 这里使用动态系数
-            attn_patch_qk_map = attn_qk_map_avg[:, :, 1:, 1:].squeeze(1) # 平均patch token之间的qk map [B,196,196]
-            attn_cls_qk_map = attn_qk_map_avg[:, :, 0, 1:]
-            # #
-            # attn_cls_qk_map = torch.bmm(torch.softmax(self.attn_fusion, dim=-1).expand(B, -1, -1), attn_block[:, :, 0, 1:].view(B, total_head_num, -1)).view(B,1,-1) # 这里使用动态系数
-            localization_map = torch.sigmoid(attn_cls_qk_map).to(patch_token.device)/PP # 计算CLS和其它token的平均attn map [B,1,196],v3里用sigmoid # 与原论文一致，除PP
-            # localization_map = localization_map.reshape(B,1,PP) #.to(patch_token.device) /PP
-            x = torch.cat([x, (torch.bmm(localization_map, patch_token).squeeze(1))], -1) 
+            # _, total_head_num, ax_1, ax_2, = attn_block.shape   # [B,head_nums*block_num,197,197]  CLS [B,head_nums*block_num,196]
+            # # 原始方法
+            # attn_qk_map_avg = torch.mean(attn_block, dim=1, keepdim=True)
+            # attn_patch_qk_map = attn_qk_map_avg[:, :, 1:, 1:].squeeze(1) # 平均patch token之间的qk map [B,196,196]
+            # attn_cls_qk_map = attn_qk_map_avg[:, :, 0, 1:]
+            # # 这里分成多头去做，针对不同block之间求平均值
+            attn_cls_multi_head = torch.mean(attn_block[:, :, 0, 1:].reshape(
+                B, self.num_heads, -1, PP), dim=2, keepdim=True)
+            # [B,head_nums*block_num,196]  -> [B,head_nums,avg,196] -> [B,head_nums,196]注意排列顺序
+            attn_cls_multi_head = torch.sigmoid(attn_cls_multi_head)/PP # 计算CLS和其它token的平均attn map [B,1,196],v3里用sigmoid # 与原论文一致，除PP
+            patch_token_multi_head = self.patch_lin_prj(patch_token).reshape(B, PP, self.num_heads, C // self.num_heads).permute(0,2,1,3).contiguous() 
+            # print(attn_cls_multi_head.shape, patch_token_multi_head.shape)
+            # 注意顺序  [B, PP, 12, 768//12]
+            x = torch.cat([x, (attn_cls_multi_head@patch_token_multi_head).reshape(B,C)], -1)
             x = self.head(x)
         return x, patch_token_middle
 
@@ -1062,19 +1067,19 @@ if __name__ == '__main__':
     model = Vit_UIAv3_hDRMLPv2()
     # print(model.vit_model.blocks)
     # print(model)
-    # image_size = 224
-    # batch_size = 1
-    # input_s = (batch_size, 3, image_size, image_size)
+    image_size = 224
+    batch_size = 1
+    input_s = (batch_size, 3, image_size, image_size)
     # # summary(model, input_s)
-    # dummy = torch.rand(batch_size, 3, image_size, image_size)
-    # cls_token, consis_map = model(dummy)
+    dummy = torch.rand(batch_size, 3, image_size, image_size)
+    cls_token, consis_map = model(dummy)
     # print(consis_map.shape)
-    weight_name = 'output/a5000/ViT-hDRMLPv2-UIAv3-1/51_0.9897_val.tar'
-    cnn_sd = torch.load(weight_name)["model"]
-    # print(model.load_state_dict(cnn_sd))
-    model.eval()
-    attn_w = model.vit_model.attn_fusion
-    print(attn_w, torch.softmax(attn_w,dim=-1).data.numpy())
+    # weight_name = 'output/a5000/ViT-hDRMLPv2-UIAv3-1/51_0.9897_val.tar'
+    # cnn_sd = torch.load(weight_name)["model"]
+    # # print(model.load_state_dict(cnn_sd))
+    # model.eval()
+    # attn_w = model.vit_model.attn_fusion
+    # print(attn_w, torch.softmax(attn_w,dim=-1).data.numpy())
     '''
     for name, para in model.named_parameters():
         # 除head, pre_logits外 其他权重全部冻结

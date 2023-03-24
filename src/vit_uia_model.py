@@ -704,7 +704,7 @@ class VisionTransformer_uia_v3(nn.Module):
         self.norm = norm_layer(embed_dim)
         self.norm_middle = norm_layer(embed_dim)
         self.isEmbed = isEmbed
-        self.patch_lin_prj = nn.Linear(embed_dim, embed_dim)
+        # self.patch_lin_prj = nn.Linear(embed_dim, embed_dim)
         # Representation layer
         if representation_size and not distilled:
             self.has_logits = True
@@ -792,7 +792,7 @@ class VisionTransformer_uia_v3(nn.Module):
                 B, self.num_heads, -1, PP), dim=2, keepdim=True)
             # [B,head_nums*block_num,196]  -> [B,head_nums,avg,196] -> [B,head_nums,196]注意排列顺序
             attn_cls_multi_head = torch.sigmoid(attn_cls_multi_head)/PP # 计算CLS和其它token的平均attn map [B,1,196],v3里用sigmoid # 与原论文一致，除PP
-            patch_token_multi_head = self.patch_lin_prj(patch_token).reshape(B, PP, self.num_heads, C // self.num_heads).permute(0,2,1,3).contiguous() 
+            patch_token_multi_head = (patch_token).reshape(B, PP, self.num_heads, C // self.num_heads).permute(0,2,1,3).contiguous() 
             # print(attn_cls_multi_head.shape, patch_token_multi_head.shape)
             # 注意顺序  [B, PP, 12, 768//12]
             x = torch.cat([x, (attn_cls_multi_head@patch_token_multi_head).reshape(B,C)], -1)
@@ -1039,7 +1039,7 @@ class Vit_UIAv2_hDRMLPv2(nn.Module):
         return cls_token
 
 class Vit_UIAv3_hDRMLPv2(nn.Module):
-    def __init__(self, weight_pth=None, attn_list=[8,9,10], feat_block=7):
+    def __init__(self, weight_pth=None, attn_list=[7,8,9,10,11], feat_block=6):
         super().__init__()
         self.vit_model = vit_base_patch16_224_in21k_uia_v3(
             num_classes=2, has_logits=False, isEmbed=False, keepEmbedWeight=False, attn_list=attn_list, feat_block=feat_block)

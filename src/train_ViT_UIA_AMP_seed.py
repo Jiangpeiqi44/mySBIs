@@ -16,7 +16,7 @@ from utils.logs import log
 from utils.funcs import load_json
 from datetime import datetime
 from tqdm import tqdm
-from vit_uia_model import Vit_UIAv3_hDRMLPv2 as Net
+from vit_uia_model import Vit_UIAv4_hDRMLPv2 as Net
 from torch.cuda.amp import autocast as autocast, GradScaler
 import math
 
@@ -180,7 +180,7 @@ def main(args):
             target_map_x_ray = data['map_x_ray'].to(device, non_blocking=True).float()
             optimizer.zero_grad()
             with autocast():
-                output, map, map_x_ray = model(img)
+                output, map, map_x_ray = model(img) # 中间层是整个map 最后一层是边界map
                 loss_cls = criterion(output, target)
                 loss_map = criterionMap(map, target_map)
                 loss_map_x_ray = criterionMap(map_x_ray, target_map_x_ray)

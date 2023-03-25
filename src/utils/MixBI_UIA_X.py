@@ -23,6 +23,8 @@ from skimage.transform import PiecewiseAffineTransform, warp
 from skimage.metrics import structural_similarity as compare_ssim
 import warnings
 import traceback
+from prefetch_generator import BackgroundGenerator
+
 warnings.filterwarnings('ignore')
 
 # win version ?
@@ -35,7 +37,7 @@ else:
     exist_bi = False
 
 
-class SBI_Dataset(Dataset):
+class SBI_DatasetX(Dataset):
     def __init__(self, phase='train', image_size=224, n_frames=8):
 
         assert phase in ['train', 'val', 'test']
@@ -58,6 +60,9 @@ class SBI_Dataset(Dataset):
         self.transforms = self.get_transforms()
         self.source_transforms = self.get_source_transforms()
 
+    def __iter__(self):
+        return BackgroundGenerator(super().__iter__())
+    
     def __len__(self):
         return len(self.image_list)
 

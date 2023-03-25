@@ -23,6 +23,7 @@ from skimage.transform import PiecewiseAffineTransform, warp
 from skimage.metrics import structural_similarity as compare_ssim
 import warnings
 import traceback
+
 warnings.filterwarnings('ignore')
 
 # win version ?
@@ -41,7 +42,12 @@ class SBI_Dataset(Dataset):
         assert phase in ['train', 'val', 'test']
 
         image_list, label_list = init_ff(phase, 'frame', n_frames=n_frames)
-
+        with open('src/utils/err_face_{}.json'.format(phase), 'r') as f:
+            self.err_face_json = json.load(f)
+        # print(len(image_list))
+        label_list = [label_list[i] for i in range(len(image_list)) if self.err_face_json[image_list[i].split('/')[-2]+'_'+image_list[i].split('/')[-1]]==True]
+        image_list = [image_list[i] for i in range(len(image_list)) if self.err_face_json[image_list[i].split('/')[-2]+'_'+image_list[i].split('/')[-1]]==True]
+        # print(len(image_list))
         path_lm = '/landmarks/'
         label_list = [label_list[i] for i in range(len(image_list)) if os.path.isfile(image_list[i].replace(
             '/frames/', path_lm).replace('.png', '.npy')) and os.path.isfile(image_list[i].replace('/frames/', '/retina/').replace('.png', '.npy'))]
@@ -57,7 +63,7 @@ class SBI_Dataset(Dataset):
         self.n_frames = n_frames
         self.transforms = self.get_transforms()
         self.source_transforms = self.get_source_transforms()
-
+    
     def __len__(self):
         return len(self.image_list)
 
@@ -541,7 +547,7 @@ if __name__ == '__main__':
     torch.backends.cudnn.benchmark = False
     # image_dataset = SBI_Dataset(phase='test', image_size=256)
     # batch_size = 64
-    image_dataset = SBI_Dataset(phase='train', image_size=224, n_frames=2)
+    image_dataset = SBI_DatasetX(phase='train', image_size=224, n_frames=2)
     batch_size = 1
     dataloader = torch.utils.data.DataLoader(image_dataset,
                                              batch_size=batch_size,

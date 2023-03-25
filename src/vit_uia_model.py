@@ -813,11 +813,12 @@ class VisionTransformer_uia_v4(nn.Module):
                  embed_dim=768, depth=12, num_heads=12, mlp_ratio=4.0, qkv_bias=True,
                  qk_scale=None, representation_size=None, distilled=False, drop_ratio=0.,
                  attn_drop_ratio=0., drop_path_ratio=0., embed_layer=PatchEmbed, norm_layer=None,
-                 act_layer=None, isEmbed=True, attn_list=[8,9,10,11]):
+                 act_layer=None, isEmbed=True, attn_list=[8,9,10,11],feat_block=7):
 
         super().__init__()
         self.scale = 768 ** -0.5
         self.attn_list = attn_list
+        self.feat_block_id = feat_block
         self.num_classes = num_classes
         # num_features for consistency with other models
         self.num_features = self.embed_dim = embed_dim
@@ -848,7 +849,7 @@ class VisionTransformer_uia_v4(nn.Module):
         self.norm = norm_layer(embed_dim)
         self.norm_middle = norm_layer(embed_dim)
         self.isEmbed = isEmbed
-        self.patch_lin_prj = nn.Linear(embed_dim, embed_dim)
+        # self.patch_lin_prj = nn.Linear(embed_dim, embed_dim)
         # Representation layer
         if representation_size and not distilled:
             self.has_logits = True
@@ -910,6 +911,8 @@ class VisionTransformer_uia_v4(nn.Module):
         # x_block = x[:, 1:].reshape((x_block.size(0), int(x_block.size(1)**0.5), int(x_block.size(1)**0.5), x_block.size(2)))
         if len(attn_map_group) > 0:
             attn_block = torch.cat(attn_map_group, dim=1)
+        else:
+            attn_block = []
         if self.dist_token is None:
             # 还需要返回其它[B,196,768]的特征token和attn_map(这里的block不一定是最后一层了)
             return self.pre_logits(x[:, 0]), x_block[:,1:], x[:,1:], attn_block
@@ -1256,7 +1259,7 @@ class Vit_UIAv4_hDRMLPv2(nn.Module):
 
     def test_time(self, x):
         x = self.custom_embed(x)
-        cls_token, _ = self.vit_model(x)
+        cls_token, _, _ = self.vit_model(x)
         return cls_token
     
 if __name__ == '__main__':

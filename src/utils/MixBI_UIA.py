@@ -108,7 +108,7 @@ class SBI_Dataset(Dataset):
                         # windows的bug
                         # idt_dir = [i.replace('\\', '/') for i in idt_dir]
                         idt_dir = [idt_dir[i] for i in range(len(idt_dir)) if os.path.isfile(idt_dir[i].replace(
-                            '/frames/', self.path_lm).replace('.png', '.npy')) and os.path.isfile(idt_dir[i].replace('/frames/', '/retina/').replace('.png', '.npy'))]
+                            '/frames/', self.path_lm).replace('.png', '.npy')) and os.path.isfile(idt_dir[i].replace('/frames/', '/retina/').replace('.png', '.npy')) and self.err_face_json[idt_dir[i].split('/')[-2]+'_'+idt_dir[i].split('/')[-1]]==True]
                         self.bi.ibi_data_list = idt_dir
                     # # 生成
                     # print(filename)

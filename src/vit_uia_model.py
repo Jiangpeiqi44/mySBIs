@@ -4,6 +4,8 @@ import torch
 import torch.nn as nn
 import math
 
+'''这个是旧的UIA'''
+
 def drop_path(x, drop_prob: float = 0., training: bool = False):
     if drop_prob == 0. or not training:
         return x
@@ -1252,8 +1254,12 @@ class Vit_UIAv4_hDRMLPv2(nn.Module):
         # # consis-1
         consis_map_middle = (self.K(patch_token_middle) @
                       self.Q(patch_token_middle).transpose(-2, -1)) * self.scale
-        consis_map_last = (self.K(patch_token_last) @
-                      self.Q(patch_token_last).transpose(-2, -1)) * self.scale
+        # v4-1里，是共用一个QK的
+        # consis_map_last = (self.K(patch_token_last) @
+        #               self.Q(patch_token_last).transpose(-2, -1)) * self.scale
+        # v4-2里，QK分开
+        consis_map_last = (self.K2(patch_token_last) @
+                      self.Q2(patch_token_last).transpose(-2, -1)) * self.scale
         return cls_token, consis_map_middle, consis_map_last
 
 

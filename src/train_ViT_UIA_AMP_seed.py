@@ -16,7 +16,7 @@ from utils.logs import log
 from utils.funcs import load_json
 from datetime import datetime
 from tqdm import tqdm
-from vit_uia_model import Vit_UIAv4_hDRMLPv2 as Net
+from vit_dual_consis_model import Vit_hDRMLPv2_dual_consisv1 as Net
 from torch.cuda.amp import autocast as autocast, GradScaler
 import math
 from prefetch_generator import BackgroundGenerator
@@ -99,7 +99,7 @@ def main(args):
                                num_workers=13,
                                pin_memory=True,
                                drop_last=True,
-                               prefetch_factor=2
+                               prefetch_factor=1
                                )
     # ,worker_init_fn=train_dataset.worker_init_fn
     val_loader = DataLoaderX(val_dataset,
@@ -108,7 +108,7 @@ def main(args):
                              collate_fn=val_dataset.collate_fn,
                              num_workers=13,
                              pin_memory=True,
-                             prefetch_factor=2
+                             prefetch_factor=1
                              )
     # ,worker_init_fn=val_dataset.worker_init_fn
 
@@ -161,7 +161,7 @@ def main(args):
 
     criterion = nn.CrossEntropyLoss()
     criterionMap = nn.BCEWithLogitsLoss() #nn.BCELoss()
-    lbda = 1
+    lbda = 2
     last_auc = 0
     last_val_auc = 0
     weight_dict = {}
@@ -169,7 +169,7 @@ def main(args):
     save_interval = 10 # 保存间隔
     # 添加针对loss最小的几组pth
     weight_dict_loss = {}
-    n_weight_loss = 1
+    n_weight_loss = 2
     # 
     last_val_loss = 0
     

@@ -269,13 +269,13 @@ class SBI_Dataset(Dataset):
                 #     for j in range(map_shape):
                 #         ssim_patch[i, j] = (
                 #             ssim_map[16*i:16*(i+1), 16*j:16*(j+1)]).mean()
-                
+                mask_x_ray_f = 4 * mask * (1 - mask)
                 mask_f = cv2.resize(
                     mask, (map_shape, map_shape), interpolation=cv2.INTER_AREA).astype('float32')
                 '''从v4-1之后的版本，都是直接从整脸Mask经过AREA缩放后再计算得到的xray'''
-                mask_x_ray_f = 4 * mask_f * (1 - mask_f)
-                # mask_x_ray_f = cv2.resize(
-                #     mask_x_ray_f, (map_shape, map_shape), interpolation=cv2.INTER_AREA).astype('float32')
+                
+                mask_x_ray_f = cv2.resize(
+                    mask_x_ray_f, (map_shape, map_shape), interpolation=cv2.INTER_AREA).astype('float32')
                 mask_r = np.ones((196, 196),dtype='float32')
                 mask_f = self.Consistency2D(mask_f)  # ssim_patch，mask_f
                 mask_x_ray_f = self.Consistency2D(mask_x_ray_f)

@@ -103,12 +103,12 @@ def main(args):
                                )
     # ,worker_init_fn=train_dataset.worker_init_fn
     val_loader = torch.utils.data.DataLoader(val_dataset,
-                             batch_size=batch_size//2,
+                             batch_size=batch_size,
                              shuffle=False,
                              collate_fn=val_dataset.collate_fn,
                              num_workers=13,
                              pin_memory=True,
-                             prefetch_factor=3
+                             prefetch_factor=2
                              )
     # ,worker_init_fn=val_dataset.worker_init_fn
 

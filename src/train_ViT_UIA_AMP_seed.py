@@ -99,7 +99,7 @@ def main(args):
                                num_workers=13,
                                pin_memory=True,
                                drop_last=True,
-                               prefetch_factor=2
+                               prefetch_factor=3
                                )
     # ,worker_init_fn=train_dataset.worker_init_fn
     val_loader = torch.utils.data.DataLoader(val_dataset,
@@ -161,7 +161,8 @@ def main(args):
 
     criterion = nn.CrossEntropyLoss()
     criterionMap = nn.BCEWithLogitsLoss() #nn.BCELoss()
-    lbda = 2
+    lbda_main = 1.5
+    lbda_edge = 0.5
     last_auc = 0
     last_val_auc = 0
     weight_dict = {}
@@ -186,11 +187,11 @@ def main(args):
             target_map_x_ray = data['map_x_ray'].to(device, non_blocking=True).float()
             optimizer.zero_grad()
             with autocast():
-                output, map, map_x_ray = model(img) # 中间层是整个map 最后一层是边界map
+                output, map_mid, map_last= model(img) # 中间层map 最后一层map
                 loss_cls = criterion(output, target)
-                loss_map = criterionMap(map, target_map)
-                loss_map_x_ray = criterionMap(map_x_ray, target_map_x_ray)
-                loss = loss_cls + lbda*loss_map + lbda*loss_map_x_ray
+                loss_map = criterionMap(map_last, target_map)
+                loss_map_x_ray = criterionMap(map_mid, target_map_x_ray)
+                loss = loss_cls + lbda_main*loss_map + lbda_edge*loss_map_x_ray
             # loss.backward()
             # optimizer.step()
             scaler.scale(loss).backward()

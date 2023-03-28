@@ -99,11 +99,11 @@ def main(args):
                                num_workers=13,
                                pin_memory=True,
                                drop_last=True,
-                               prefetch_factor=3
+                               prefetch_factor=2
                                )
     # ,worker_init_fn=train_dataset.worker_init_fn
     val_loader = torch.utils.data.DataLoader(val_dataset,
-                             batch_size=batch_size,
+                             batch_size=batch_size//2,
                              shuffle=False,
                              collate_fn=val_dataset.collate_fn,
                              num_workers=13,
@@ -223,9 +223,8 @@ def main(args):
             img = data['img'].to(device, non_blocking=True).float()
             target = data['label'].to(device, non_blocking=True).long()
             with torch.no_grad():
-                with autocast():
-                    output = model.test_time(img)
-                    loss = criterion(output, target)
+                output = model.test_time(img)
+                loss = criterion(output, target)
             loss_value = loss.item()
             iter_loss.append(loss_value)
             val_loss += loss_value

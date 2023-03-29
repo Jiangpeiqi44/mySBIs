@@ -186,7 +186,6 @@ class SBI_Dataset(Dataset):
                     mask_bi = mask_bi[y0_new:y1_new, x0_new:x1_new]
                     
 
-                
                 # if self.phase == 'train' and np.random.rand() < 0.5:
                 if False:
                     # ## 进行基于SSIM的动态增强

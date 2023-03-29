@@ -92,7 +92,7 @@ def main(args):
                                                num_workers=14,
                                                pin_memory=True,
                                                drop_last=True,
-                                               prefetch_factor=2
+                                               prefetch_factor=3
                                                )
     # ,worker_init_fn=train_dataset.worker_init_fn
     val_loader = torch.utils.data.DataLoader(val_dataset,

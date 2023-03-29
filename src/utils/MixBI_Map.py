@@ -268,6 +268,8 @@ class SBI_Dataset(Dataset):
                     mask, (map_shape, map_shape), interpolation=cv2.INTER_AREA).astype('float32')
 
                 mask_r = np.ones((196, 196),dtype='float32')
+                if self.bi.not_aug_flag == True:
+                    mask_f = 4*(1-mask_f)*mask_f  # IBI不增强时监督是xray 
                 mask_f = self.Consistency2D(mask_f)  # ssim_patch，mask_f
 
                 flag = False
@@ -280,10 +282,9 @@ class SBI_Dataset(Dataset):
         return img_f, img_r, mask_f, mask_r
 
     def Consistency2D(self, mask):
-        real_mask = mask.flatten()  # shape like [1,196]
-        real_mask = real_mask.reshape((1,)+real_mask.shape)
-        consis_map = [np.squeeze(1 - abs(m - real_mask))
-                      for m in real_mask[0, :]]
+        real_mask = mask.reshape(1,-1)
+        consis_map = [np.squeeze(1 - abs(real_mask[0,i] - real_mask))
+                      for i in range(real_mask.shape[1])]
         return np.array(consis_map)
     
 

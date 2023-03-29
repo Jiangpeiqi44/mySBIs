@@ -41,7 +41,12 @@ class SBI_Dataset(Dataset):
         assert phase in ['train', 'val', 'test']
 
         image_list, label_list = init_ff(phase, 'frame', n_frames=n_frames)
-
+        with open('src/utils/err_face_{}.json'.format(phase), 'r') as f:
+            self.err_face_json = json.load(f)
+        # print(len(image_list))
+        label_list = [label_list[i] for i in range(len(image_list)) if self.err_face_json[image_list[i].split('/')[-2]+'_'+image_list[i].split('/')[-1]]==True]
+        image_list = [image_list[i] for i in range(len(image_list)) if self.err_face_json[image_list[i].split('/')[-2]+'_'+image_list[i].split('/')[-1]]==True]
+        # print(len(image_list))
         path_lm = '/landmarks/'
         label_list = [label_list[i] for i in range(len(image_list)) if os.path.isfile(image_list[i].replace(
             '/frames/', path_lm).replace('.png', '.npy')) and os.path.isfile(image_list[i].replace('/frames/', '/retina/').replace('.png', '.npy'))]

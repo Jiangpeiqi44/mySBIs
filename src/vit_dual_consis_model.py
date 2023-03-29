@@ -501,7 +501,7 @@ def hDRMLPv2_embed(weight_pth:str):
     return model
 
 class Vit_hDRMLPv2_dual_consisv1(nn.Module):
-    def __init__(self, weight_pth=None, attn_list=[], feat_block=5):
+    def __init__(self, weight_pth=None, attn_list=[], feat_block=7):
         super().__init__()
         self.vit_model = vit_base_patch16_224_in21k_dual_consisv1(
             num_classes=2, has_logits=False, isEmbed=False, keepEmbedWeight=False, attn_list=attn_list, feat_block=feat_block)

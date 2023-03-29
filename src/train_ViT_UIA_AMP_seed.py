@@ -92,23 +92,23 @@ def main(args):
         phase='train', image_size=image_size, n_frames=8)
     val_dataset = SBI_Dataset(phase='val', image_size=image_size, n_frames=8)
 
-    train_loader = torch.utils.data.DataLoader(train_dataset,
+    train_loader = DataLoaderX(train_dataset,
                                batch_size=batch_size//2,
                                shuffle=True,
                                collate_fn=train_dataset.collate_fn,
-                               num_workers=13,
+                               num_workers=15,
                                pin_memory=True,
                                drop_last=True,
-                               prefetch_factor=3
+                               prefetch_factor=1
                                )
     # ,worker_init_fn=train_dataset.worker_init_fn
-    val_loader = torch.utils.data.DataLoader(val_dataset,
+    val_loader = DataLoaderX(val_dataset,
                              batch_size=batch_size//2,
                              shuffle=False,
                              collate_fn=val_dataset.collate_fn,
-                             num_workers=13,
+                             num_workers=15,
                              pin_memory=True,
-                             prefetch_factor=2
+                             prefetch_factor=1
                              )
     # ,worker_init_fn=val_dataset.worker_init_fn
 
@@ -189,8 +189,8 @@ def main(args):
             with autocast():
                 output, map_mid, map_last= model(img) # 中间层map 最后一层map
                 loss_cls = criterion(output, target)
-                loss_map = criterionMap(map_last, target_map)
-                loss_map_x_ray = criterionMap(map_mid, target_map_x_ray)
+                loss_map = criterionMap(map_mid, target_map)
+                loss_map_x_ray = criterionMap(map_last, target_map_x_ray)
                 loss = loss_cls + lbda_main*loss_map + lbda_edge*loss_map_x_ray
             # loss.backward()
             # optimizer.step()

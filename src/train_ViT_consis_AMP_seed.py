@@ -19,7 +19,13 @@ from tqdm import tqdm
 from vit_custom_model import Vit_consis_hDRMLPv2 as Net
 from torch.cuda.amp import autocast as autocast, GradScaler
 import math
+from prefetch_generator import BackgroundGenerator
 
+
+class DataLoaderX(torch.utils.data.DataLoader):
+
+    def __iter__(self):
+        return BackgroundGenerator(super().__iter__())
 
 def compute_accuray(pred, true):
     pred_idx = pred.argmax(dim=1).cpu().data.numpy()
@@ -85,23 +91,23 @@ def main(args):
         phase='train', image_size=image_size, n_frames=8)
     val_dataset = SBI_Dataset(phase='val', image_size=image_size, n_frames=8)
 
-    train_loader = torch.utils.data.DataLoader(train_dataset,
+    train_loader = DataLoaderX(train_dataset,
                                                batch_size=batch_size//2,
                                                shuffle=True,
                                                collate_fn=train_dataset.collate_fn,
-                                               num_workers=14,
+                                               num_workers=15,
                                                pin_memory=True,
                                                drop_last=True,
-                                               prefetch_factor=3
+                                               prefetch_factor=1
                                                )
     # ,worker_init_fn=train_dataset.worker_init_fn
-    val_loader = torch.utils.data.DataLoader(val_dataset,
+    val_loader = DataLoaderX(val_dataset,
                                              batch_size=batch_size//2,
                                              shuffle=False,
                                              collate_fn=val_dataset.collate_fn,
-                                             num_workers=14,
+                                             num_workers=15,
                                              pin_memory=True,
-                                             prefetch_factor=2
+                                             prefetch_factor=1
                                              )
     # ,worker_init_fn=val_dataset.worker_init_fn
 

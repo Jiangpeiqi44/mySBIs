@@ -422,7 +422,7 @@ class VisionTransformer_consisv1(nn.Module):
             return x[:, 0], x[:, 1]
 
     def forward(self, x):
-        x, patch_token_middle, patch_token_last, attn_block = self.forward_features(x)
+        x, patch_token, attn_block = self.forward_features(x)
         if self.head_dist is not None:
             x, x_dist = self.head(x[0]), self.head_dist(x[1])
             if self.training and not torch.jit.is_scripting():
@@ -442,7 +442,7 @@ class VisionTransformer_consisv1(nn.Module):
             # x = torch.cat([x, torch.bmm(localization_map, patch_token).squeeze(1)], -1) 
             # # 直接送入head
             x = self.head(x)
-        return x, patch_token_middle, patch_token_last
+        return x, patch_token
 
 def _init_vit_weights(m):
     """
@@ -512,17 +512,21 @@ class Vit_hDRMLPv2_consisv1(nn.Module):
             num_classes=2, has_logits=False, isEmbed=False, keepEmbedWeight=False, attn_list=attn_list, feat_block=feat_block)
         self.custom_embed = hDRMLPv2_embed(weight_pth)
         # consis-1
-        self.K = nn.Linear(768, 768)
-        self.Q = nn.Linear(768, 768)
+        self.KQ = nn.Linear(768, 768*2)
         self.scale = 768 ** -0.5
        
     def forward(self, x):
         x = self.custom_embed(x)
         cls_token, patch_token = self.vit_model(x)
+        B, PP, C = patch_token.shape  # [B, 196, 768]
+        kq = self.KQ(patch_token).reshape(B, PP, 2, 2, C//2).permute(2, 0, 3, 1, 4)    # reshape参数:[batch,patch token, qk_num, head_nums, c//head_nums]
+        k, q = kq[0], kq[1]  # [B,2,PP,C//2]
         # # consis-1
-        consis_map_middle = (self.K(patch_token) @
-                      self.Q(patch_token).transpose(-2, -1)) * self.scale
-        return cls_token, consis_map_middle,
+        attn_map = k@q.transpose(-2, -1)* self.scale
+        # 这里在损失函数中用sigmoid激活
+        consis_map_main = attn_map[:,0]
+        consis_map_edge = attn_map[:,1]
+        return cls_token, consis_map_main, consis_map_edge
 
 
     def test_time(self, x):

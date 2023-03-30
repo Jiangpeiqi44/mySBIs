@@ -273,8 +273,10 @@ class SBI_Dataset(Dataset):
                 '''从v4-1之后的版本,都是直接从整脸Mask经过AREA缩放后再计算得到的xray'''
                 mask_r = np.ones((196, 196),dtype='float32')
                 # #这里是x ray的相关性
+                # 非二值化
+                mask_x_ray_f = 4 * mask_f * (1 - mask_f)
                 # 二值化
-                mask_x_ray_f = np.round(4 * mask_f * (1 - mask_f))
+                # mask_x_ray_f = np.round(4 * mask_f * (1 - mask_f))
                 # mask_f = np.round(mask_f)
                 # if self.bi.not_aug_flag == True:
                 #     # IBI不增强的时候，内外脸是一致的

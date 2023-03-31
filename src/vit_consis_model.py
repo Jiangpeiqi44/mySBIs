@@ -531,7 +531,7 @@ class Vit_hDRMLPv2_consisv1(nn.Module):
 
     def test_time(self, x):
         x = self.custom_embed(x)
-        cls_token, _, _ = self.vit_model(x)
+        cls_token, _ = self.vit_model(x)
         return cls_token
     
 if __name__ == '__main__':

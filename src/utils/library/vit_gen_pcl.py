@@ -254,12 +254,13 @@ class BIOnlineGeneration():
                     background_face, foreground_face, mask*255)
             elif self.stats == 'IBI':
                 foreground_face = colorTransfer(
-                    background_face, foreground_face, mask*255)     
-                if np.random.rand() < 0.15:
-                    '''不增强and不blur 直接模拟边界'''
-                    self.not_aug_flag = True
-                    if np.random.rand() < 0.5:
-                        blur_flag = False
+                    background_face, foreground_face, mask*255)
+            # v6pp里 IBI和BI都有0.1的概率不增强  （原来是0.15   
+            if np.random.rand() < 0.1:
+                '''不增强and不blur 直接模拟边界'''
+                self.not_aug_flag = True
+                if np.random.rand() < 0.25:
+                    blur_flag = False
                 # elif np.random.rand() < 0.15:
                 #     x_ray_flag = True
                 #

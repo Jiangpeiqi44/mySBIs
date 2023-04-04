@@ -933,6 +933,7 @@ class Vit_hDRMLPv2_consisv2(nn.Module):
         consis_map_main = attn_map[:,0]
         consis_map_edge = attn_map[:,1]
         return cls_token, consis_map_main, consis_map_edge
+    
     def test_time(self, x):
         x = self.custom_embed(x)
         cls_token, _ = self.vit_model(x)
@@ -966,7 +967,7 @@ class Vit_hDRMLPv2_consisv3(nn.Module):
         return cls_token
 
 class Vit_hDRMLPv2_consisv4(nn.Module):
-    def __init__(self, weight_pth=None, attn_list=[4,5,6,7],feat_block=11):
+    def __init__(self, weight_pth=None, attn_list=[4,5,6,7],feat_block=7):
         super().__init__()
         self.vit_model = vit_base_patch16_224_in21k_consisv3(
             num_classes=2, has_logits=False, isEmbed=False, keepEmbedWeight=False, attn_list=attn_list, feat_block=feat_block)
@@ -979,13 +980,14 @@ class Vit_hDRMLPv2_consisv4(nn.Module):
         x = self.custom_embed(x)
         cls_token, patch_token = self.vit_model(x)
         B, PP, C = patch_token.shape  # [B, 196, 768]
-        kq = self.KQ(patch_token).reshape(B, PP, 2, C).permute(2, 0, 1, 3)    # reshape参数:[batch,patch token, qk_num, c/]
+        kq = self.KQ(patch_token).reshape(B, PP, 2, 2, C//2).permute(2, 0, 3, 1, 4)    # reshape参数:[batch,patch token, qk_num, head_nums, c//head_nums]
         k, q = kq[0], kq[1]  # [B,2,PP,C//2]
         # # consis-1
         attn_map = k@q.transpose(-2, -1)* self.scale
         # 这里在损失函数中用sigmoid激活
-        consis_map_main = attn_map
-        return cls_token, consis_map_main
+        consis_map_main = attn_map[:,0]
+        consis_map_edge = attn_map[:,1]
+        return cls_token, consis_map_main, consis_map_edge
 
     def test_time(self, x):
         x = self.custom_embed(x)

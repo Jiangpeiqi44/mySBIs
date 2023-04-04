@@ -565,9 +565,9 @@ class VisionTransformer_consisv2(nn.Module):
             # # 这里可以提取平均Attention map
             # # patch token [B, 196, 768]
             B, PP, C = patch_token.shape
-            attn_qk_map_avg = torch.mean(attn_block, dim=1, keepdim=False) # [B,1,PP+1,PP+1]
+            attn_qk_map_avg = torch.mean(attn_block.detach(), dim=1, keepdim=False) # [B,1,PP+1,PP+1] 在这里断开梯度
             attn_patch_qk_map = attn_qk_map_avg[:, 1:, 1:] # 计算平均patch token之间的qk map [B,196,196]
-            localization_map = torch.softmax(attn_patch_qk_map, dim=-1).detach() # [B,196,196] 在这里断开梯度
+            localization_map = torch.softmax(attn_patch_qk_map, dim=-1) # [B,196,196] 
             localization_map = self.convert_consis(localization_map) # [B,196,196]
             localization_map = nn.functional.interpolate(localization_map.unsqueeze(1),size=(14,14),mode='bilinear',align_corners=False) # [B,1,14,14]
             localization_map = localization_map.reshape(B,1,PP)
@@ -578,7 +578,7 @@ class VisionTransformer_consisv2(nn.Module):
     
     def convert_consis(self, map):
         B, _, __ = map.shape
-        consis_img = torch.zeros(B, 196, 196)
+        consis_img = torch.zeros(B, 196, 196).to(map.device)
         for i in range(196):
             start_h = 14*(i // 14)
             start_w = 14*(i % 14)

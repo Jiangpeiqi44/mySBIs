@@ -707,7 +707,7 @@ class Vit_hDRMLPv2_consisv1(nn.Module):
         return cls_token
 
 class Vit_hDRMLPv2_consisv2(nn.Module):
-    def __init__(self, weight_pth=None, attn_list=[4,5,6],feat_block=7):
+    def __init__(self, weight_pth=None, attn_list=[4,5,6],feat_block=9):
         super().__init__()
         self.vit_model = vit_base_patch16_224_in21k_consisv2(
             num_classes=2, has_logits=False, isEmbed=False, keepEmbedWeight=False, attn_list=attn_list, feat_block=feat_block)

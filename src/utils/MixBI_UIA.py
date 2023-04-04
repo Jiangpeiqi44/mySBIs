@@ -274,10 +274,10 @@ class SBI_Dataset(Dataset):
                 mask_r = np.ones((196, 196),dtype='float32')
                 # #这里是x ray的相关性
                 # 非二值化
-                # mask_x_ray_f = 4 * mask_f * (1 - mask_f)
+                mask_x_ray_f = 4 * mask_f * (1 - mask_f)
                 # 二值化
-                mask_x_ray_f = np.round(4 * mask_f * (1 - mask_f))
-                mask_f = np.round(mask_f)
+                # mask_x_ray_f = np.round(4 * mask_f * (1 - mask_f))
+                # mask_f = np.round(mask_f)
                 #
                 mask_f = self.Consistency2D(mask_f)  # ssim_patch，mask_f
                 mask_x_ray_f = self.Consistency2D(mask_x_ray_f)

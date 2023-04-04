@@ -16,7 +16,7 @@ from utils.logs import log
 from utils.funcs import load_json
 from datetime import datetime
 from tqdm import tqdm
-from vit_dual_consis_model import Vit_hDRMLPv2_dual_consisv1 as Net
+from vit_consis_model import Vit_hDRMLPv2_consisv1 as Net
 from torch.cuda.amp import autocast as autocast, GradScaler
 import math
 from prefetch_generator import BackgroundGenerator
@@ -96,19 +96,19 @@ def main(args):
                                batch_size=batch_size//2,
                                shuffle=True,
                                collate_fn=train_dataset.collate_fn,
-                               num_workers=15,
+                               num_workers=14,
                                pin_memory=True,
                                drop_last=True,
-                               prefetch_factor=1
+                               prefetch_factor=3
                                )
     # ,worker_init_fn=train_dataset.worker_init_fn
     val_loader = DataLoaderX(val_dataset,
                              batch_size=batch_size//2,
                              shuffle=False,
                              collate_fn=val_dataset.collate_fn,
-                             num_workers=15,
+                             num_workers=14,
                              pin_memory=True,
-                             prefetch_factor=1
+                             prefetch_factor=3
                              )
     # ,worker_init_fn=val_dataset.worker_init_fn
 

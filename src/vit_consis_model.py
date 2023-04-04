@@ -3,7 +3,7 @@ from collections import OrderedDict
 import torch
 import torch.nn as nn
 import math
-
+import numpy as np
 '''这个是基于UIA修改的一致性监督,修复attn map的一些bug
    此外 放弃了双重Map监督的思路'''
 
@@ -568,7 +568,7 @@ class VisionTransformer_consisv2(nn.Module):
             attn_qk_map_avg = torch.mean(attn_block.detach(), dim=1, keepdim=False) # [B,1,PP+1,PP+1] 在这里断开梯度
             attn_patch_qk_map = attn_qk_map_avg[:, 1:, 1:] # 计算平均patch token之间的qk map [B,196,196]
             localization_map = torch.softmax(attn_patch_qk_map, dim=-1) # [B,196,196] 
-            localization_map = self.convert_consis(localization_map) # [B,196,196]
+            localization_map = self.convert_consis_2(localization_map) # [B,196,196]
             localization_map = nn.functional.interpolate(localization_map.unsqueeze(1),size=(14,14),mode='bilinear',align_corners=False) # [B,1,14,14]
             localization_map = localization_map.reshape(B,1,PP)
             x = torch.cat([x, torch.bmm(localization_map, patch_token).squeeze(1)], -1)  # [B,768*2]
@@ -587,6 +587,22 @@ class VisionTransformer_consisv2(nn.Module):
                 w = j % 14
                 consis_img[:,start_h+h,start_w+w] = map[:,i,j]
         return consis_img
+    
+    def convert_consis_2(self, map):
+        # map = map.reshape((1,)+map.shape)
+        B, PP, _ = map.shape
+        map_gpu = map.device
+        map = map.cpu().data.numpy()
+        consis_img = np.zeros((B,196,196))
+        for i in range(196):
+            start_h = 14*(i // 14)
+            start_w = 14*(i % 14)
+            for j in range(196):
+                h = j // 14
+                w = j % 14
+                consis_img[:,start_h+h,start_w+w] = map[:,i,j]
+        return torch.tensor(consis_img).to(map_gpu).float()
+    
 def _init_vit_weights(m):
     """
     ViT weight initialization
@@ -728,7 +744,32 @@ class Vit_hDRMLPv2_consisv2(nn.Module):
         consis_map_main = attn_map[:,0]
         consis_map_edge = attn_map[:,1]
         return cls_token, consis_map_main, consis_map_edge
+    def test_time(self, x):
+        x = self.custom_embed(x)
+        cls_token, _ = self.vit_model(x)
+        return cls_token
 
+class Vit_hDRMLPv2_consisv3(nn.Module):
+    def __init__(self, weight_pth=None, attn_list=[4,5,6],feat_block=11):
+        super().__init__()
+        self.vit_model = vit_base_patch16_224_in21k_consisv2(
+            num_classes=2, has_logits=False, isEmbed=False, keepEmbedWeight=False, attn_list=attn_list, feat_block=feat_block)
+        self.custom_embed = hDRMLPv2_embed(weight_pth)
+        # consis-1
+        self.KQ = nn.Linear(768, 768*2)
+        self.scale = 768 ** -0.5
+       
+    def forward(self, x):
+        x = self.custom_embed(x)
+        cls_token, patch_token = self.vit_model(x)
+        B, PP, C = patch_token.shape  # [B, 196, 768]
+        kq = self.KQ(patch_token).reshape(B, PP, 2, C).permute(2, 0, 1, 3)    # reshape参数:[batch,patch token, qk_num, c/]
+        k, q = kq[0], kq[1]  # [B,2,PP,C//2]
+        # # consis-1
+        attn_map = k@q.transpose(-2, -1)* self.scale
+        # 这里在损失函数中用sigmoid激活
+        consis_map_main = attn_map
+        return cls_token, consis_map_main
 
     def test_time(self, x):
         x = self.custom_embed(x)
@@ -737,16 +778,16 @@ class Vit_hDRMLPv2_consisv2(nn.Module):
     
 if __name__ == '__main__':
     from torchinfo import summary
-    model = Vit_hDRMLPv2_consisv2()
+    model = Vit_hDRMLPv2_consisv3()
     # print(model.vit_model.blocks)
     # print(model)
     image_size = 224
     batch_size = 1
     input_s = (batch_size, 3, image_size, image_size)
-    # # summary(model, input_s)
-    dummy = torch.rand(batch_size, 3, image_size, image_size)
-    cls_token, consis_map,_ = model(dummy)
-    print(consis_map.shape)
+    summary(model, input_s)
+    # dummy = torch.rand(batch_size, 3, image_size, image_size)
+    # cls_token, consis_map,_ = model(dummy)
+    # print(consis_map.shape)
     # weight_name = 'output/a5000/ViT-hDRMLPv2-UIAv3-1/51_0.9897_val.tar'
     # cnn_sd = torch.load(weight_name)["model"]
     # # print(model.load_state_dict(cnn_sd))

@@ -16,7 +16,7 @@ from utils.logs import log
 from utils.funcs import load_json
 from datetime import datetime
 from tqdm import tqdm
-from vit_consis_model import Vit_hDRMLPv2_consisv1 as Net
+from vit_consis_model import Vit_hDRMLPv2_consisv5 as Net
 from torch.cuda.amp import autocast as autocast, GradScaler
 import math
 from prefetch_generator import BackgroundGenerator
@@ -162,7 +162,7 @@ def main(args):
     criterion = nn.CrossEntropyLoss()
     criterionMap = nn.BCEWithLogitsLoss() #nn.BCELoss()
     lbda_main = 2
-    lbda_edge = 1
+    lbda_edge = 2
     last_auc = 0
     last_val_auc = 0
     weight_dict = {}

@@ -720,6 +720,138 @@ class VisionTransformer_consisv3(nn.Module):
             x = self.head(x)
         return x, patch_token
     
+class VisionTransformer_consisv4(nn.Module):
+    def __init__(self, attn_list, feat_block, img_size=224, patch_size=16, in_c=3, num_classes=1000,
+                 embed_dim=768, depth=12, num_heads=12, mlp_ratio=4.0, qkv_bias=True,
+                 qk_scale=None, representation_size=None, distilled=False, drop_ratio=0.,
+                 attn_drop_ratio=0., drop_path_ratio=0., embed_layer=PatchEmbed, norm_layer=None,
+                 act_layer=None, isEmbed=True):
+
+        super().__init__()
+        self.scale = 768 ** -0.5
+        self.attn_list = attn_list
+        self.feat_block_id = feat_block
+        self.num_classes = num_classes
+        # num_features for consistency with other models
+        self.num_features = self.embed_dim = embed_dim
+        self.num_tokens = 2 if distilled else 1
+        norm_layer = norm_layer or partial(nn.LayerNorm, eps=1e-6)
+        act_layer = act_layer or nn.GELU
+
+        self.patch_embed = embed_layer(
+            img_size=img_size, patch_size=patch_size, in_c=in_c, embed_dim=embed_dim)
+        num_patches = self.patch_embed.num_patches
+
+        self.cls_token = nn.Parameter(torch.zeros(1, 1, embed_dim))
+        self.dist_token = nn.Parameter(torch.zeros(
+            1, 1, embed_dim)) if distilled else None
+        self.pos_embed = nn.Parameter(torch.zeros(
+            1, num_patches + self.num_tokens, embed_dim))
+        self.pos_drop = nn.Dropout(p=drop_ratio)
+
+        # stochastic depth decay rule
+        dpr = [x.item() for x in torch.linspace(0, drop_path_ratio, depth)]
+        self.blocks =  nn.ModuleList([
+            Block_qk_map(dim=embed_dim, num_heads=num_heads,mlp_ratio=mlp_ratio, qkv_bias=qkv_bias, qk_scale=qk_scale,
+                     drop_ratio=drop_ratio, attn_drop_ratio=attn_drop_ratio, drop_path_ratio=dpr[i],
+                     norm_layer=norm_layer, act_layer=act_layer)
+            for i in range(depth)
+        ])
+        self.norm = norm_layer(embed_dim)
+        self.norm_middle = norm_layer(embed_dim)
+        self.isEmbed = isEmbed
+        # self.patch_lin_prj = nn.Linear(embed_dim, embed_dim)
+        # Representation layer
+        if representation_size and not distilled:
+            self.has_logits = True
+            self.num_features = representation_size
+            self.pre_logits = nn.Sequential(OrderedDict([
+                ("fc", nn.Linear(embed_dim, representation_size)),
+                ("act", nn.Tanh())
+            ]))
+        else:
+            self.has_logits = False
+            self.pre_logits = nn.Identity()
+
+        # Classifier head(s)
+        # self.head = nn.Linear(
+        #     self.num_features, num_classes) if num_classes > 0 else nn.Identity()
+        # self.head_drop = nn.Dropout(p=0.2)
+        self.head = nn.Linear(embed_dim*2, num_classes) if num_classes > 0 else nn.Identity()
+        self.head_dist = None
+        if distilled:
+            self.head_dist = nn.Linear(
+                self.embed_dim, self.num_classes) if num_classes > 0 else nn.Identity()
+
+        # Weight init
+        nn.init.trunc_normal_(self.pos_embed, std=0.02)
+        if self.dist_token is not None:
+            nn.init.trunc_normal_(self.dist_token, std=0.02)
+
+        nn.init.trunc_normal_(self.cls_token, std=0.02)
+        self.apply(_init_vit_weights)
+
+    def forward_features(self, x):
+        # [B, C, H, W] -> [B, num_patches, embed_dim]
+        if self.isEmbed:
+            x = self.patch_embed(x)  # [B, 196, 768]
+        # [1, 1, 768] -> [B, 1, 768]
+        cls_token = self.cls_token.expand(x.shape[0], -1, -1)
+        if self.dist_token is None:
+            x = torch.cat((cls_token, x), dim=1)  # [B, 197, 768]
+        else:
+            x = torch.cat((cls_token, self.dist_token.expand(
+                x.shape[0], -1, -1), x), dim=1)
+        x = self.pos_drop(x + self.pos_embed)
+        attn_map_group = []
+        for i,blk in enumerate(self.blocks):
+            x, attn_map = blk(x)
+            if i  in self.attn_list:
+                # 将qk_map添加到list
+                attn_map_group.append(attn_map)
+            # 这里把选中的 block feat返回
+            if i == self.feat_block_id and self.feat_block_id != len(self.blocks)-1:
+                x_block = x   # [B,197,768]
+        x = self.norm(x)
+        if self.feat_block_id != len(self.blocks)-1:
+            # 如果选取的block不是最后一层则需要norm一下
+            x_block = self.norm_middle(x_block)
+        else:
+            x_block = x
+        if len(attn_map_group) > 0:
+            attn_block = torch.cat(attn_map_group, dim=1)
+        else:
+            attn_block = torch.zeros(x.shape[0])
+        if self.dist_token is None:
+            # 返回选中的Block
+            return self.pre_logits(x[:, 0]), x_block[:,1:], x[:, 1:], attn_block
+        else:
+            return x[:, 0], x[:, 1]
+
+    def forward(self, x):
+        x, patch_token, last_patch_token, attn_block = self.forward_features(x)
+        if self.head_dist is not None:
+            x, x_dist = self.head(x[0]), self.head_dist(x[1])
+            if self.training and not torch.jit.is_scripting():
+                # during inference, return the average of both classifier predictions
+                return x, x_dist
+            else:
+                return (x + x_dist) / 2
+        else:
+            # # 这里可以提取平均Attention map
+            # # patch token [B, 196, 768]
+            B, PP, C = patch_token.shape
+            attn_qk_map_avg = torch.mean(attn_block.detach(), dim=1, keepdim=False) # [B,1,PP+1,PP+1] 在这里断开梯度
+            attn_patch_qk_map = attn_qk_map_avg[:, 1:, 1:] # 计算平均patch token之间的qk map [B,196,196]
+            localization_map = torch.softmax(attn_patch_qk_map, dim=-1) # [B,196,196] 
+            localization_map = convert_consis_3(localization_map) # [B,196,196]
+            localization_map = nn.functional.interpolate(localization_map.unsqueeze(1),size=(14,14),mode='bilinear',align_corners=False) # [B,1,14,14]
+            localization_map = localization_map.reshape(B,1,PP)
+            x = torch.cat([x, torch.bmm(localization_map, patch_token).squeeze(1)], -1)  # [B,768*2]   # 这里之前的版本有bug
+            # # 直接送入head
+            x = self.head(x)
+        return x, last_patch_token
+    
 def convert_consis(map):
     B, _, __ = map.shape
     consis_img = torch.zeros(B, 196, 196).to(map.device)
@@ -867,6 +999,35 @@ def vit_base_patch16_224_in21k_consisv3(num_classes: int = 21843, has_logits: bo
     print(model.load_state_dict(weights_dict, strict=False))
     return model
 
+def vit_base_patch16_224_in21k_consisv4(num_classes: int = 21843, has_logits: bool = True, isEmbed: bool = True, drop_ratio: float = 0.,
+                                           attn_drop_ratio: float = 0., drop_path_ratio: float = 0., keepEmbedWeight: bool = True, attn_list: list = [7,8,9,10,11], feat_block: int = 6):
+    model = VisionTransformer_consisv4(img_size=224,
+                                          patch_size=16,
+                                          embed_dim=768,
+                                          depth=12,
+                                          num_heads=12,
+                                          drop_ratio=drop_ratio,
+                                          attn_drop_ratio=attn_drop_ratio,
+                                          drop_path_ratio=drop_path_ratio,
+                                          representation_size=768 if has_logits else None,
+                                          num_classes=num_classes, isEmbed=isEmbed,
+                                          attn_list=attn_list,
+                                          feat_block=feat_block)
+    if not keepEmbedWeight:
+        del model.patch_embed
+    weight_pth = 'src/jx_vit_base_patch16_224_in21k-e5005f0a.pth'
+    weights_dict = torch.load(weight_pth)
+    # # 删除不需要的权重
+    del_keys = ['head.weight', 'head.bias'] if model.has_logits \
+        else ['pre_logits.fc.weight', 'pre_logits.fc.bias', 'head.weight', 'head.bias']
+    for k in del_keys:
+        del weights_dict[k]
+    # # # for DEBUG
+    # weight_pth = 'output/3090_pretrained/ViT-4/8_0.9926_val.tar'
+    # weights_dict = torch.load(weight_pth)["model"]
+    print(model.load_state_dict(weights_dict, strict=False))
+    return model
+
 def hDRMLPv2_embed(weight_pth:str):
     model = hDRMLPv2Embed(img_size=(224, 224), patch_size=(16, 16), in_chans=3, embed_dim=768, norm_layer=nn.BatchNorm2d)
     if weight_pth is not None:
@@ -883,6 +1044,7 @@ def hDRMLPv2_embed(weight_pth:str):
     return model
 
 class Vit_hDRMLPv2_consisv1(nn.Module):
+    '''多头KQ映射 无Assemble'''
     def __init__(self, weight_pth=None, attn_list=[], feat_block=11):
         super().__init__()
         self.vit_model = vit_base_patch16_224_in21k_consisv1(
@@ -912,6 +1074,7 @@ class Vit_hDRMLPv2_consisv1(nn.Module):
         return cls_token
 
 class Vit_hDRMLPv2_consisv2(nn.Module):
+    '''第k层多头KQ映射 平均Attn用来Assemble第k层'''
     def __init__(self, weight_pth=None, attn_list=[4,5,6],feat_block=9):
         super().__init__()
         self.vit_model = vit_base_patch16_224_in21k_consisv2(
@@ -940,6 +1103,7 @@ class Vit_hDRMLPv2_consisv2(nn.Module):
         return cls_token
 
 class Vit_hDRMLPv2_consisv3(nn.Module):
+    '''第k层单头KQ映射 平均Attn用来Assemble第k层'''
     def __init__(self, weight_pth=None, attn_list=[4,5,6],feat_block=11):
         super().__init__()
         self.vit_model = vit_base_patch16_224_in21k_consisv2(
@@ -967,9 +1131,39 @@ class Vit_hDRMLPv2_consisv3(nn.Module):
         return cls_token
 
 class Vit_hDRMLPv2_consisv4(nn.Module):
+    '''第k层多头KQ映射 平均Attn用来Assemble第12层'''
     def __init__(self, weight_pth=None, attn_list=[4,5,6,7],feat_block=9):
         super().__init__()
         self.vit_model = vit_base_patch16_224_in21k_consisv3(
+            num_classes=2, has_logits=False, isEmbed=False, keepEmbedWeight=False, attn_list=attn_list, feat_block=feat_block)
+        self.custom_embed = hDRMLPv2_embed(weight_pth)
+        # consis-1
+        self.KQ = nn.Linear(768, 768*2)
+        self.scale = 768 ** -0.5
+       
+    def forward(self, x):
+        x = self.custom_embed(x)
+        cls_token, patch_token = self.vit_model(x)
+        B, PP, C = patch_token.shape  # [B, 196, 768]
+        kq = self.KQ(patch_token).reshape(B, PP, 2, 2, C//2).permute(2, 0, 3, 1, 4)    # reshape参数:[batch,patch token, qk_num, head_nums, c//head_nums]
+        k, q = kq[0], kq[1]  # [B,2,PP,C//2]
+        # # consis-1
+        attn_map = k@q.transpose(-2, -1)* self.scale
+        # 这里在损失函数中用sigmoid激活
+        consis_map_main = attn_map[:,0]
+        consis_map_edge = attn_map[:,1]
+        return cls_token, consis_map_main, consis_map_edge
+
+    def test_time(self, x):
+        x = self.custom_embed(x)
+        cls_token, _ = self.vit_model(x)
+        return cls_token
+
+class Vit_hDRMLPv2_consisv5(nn.Module):
+    '''第12层多头KQ映射 平均Attn用来Assemble第k层'''
+    def __init__(self, weight_pth=None, attn_list=[3,4,5,6,7,8],feat_block=9):
+        super().__init__()
+        self.vit_model = vit_base_patch16_224_in21k_consisv4(
             num_classes=2, has_logits=False, isEmbed=False, keepEmbedWeight=False, attn_list=attn_list, feat_block=feat_block)
         self.custom_embed = hDRMLPv2_embed(weight_pth)
         # consis-1

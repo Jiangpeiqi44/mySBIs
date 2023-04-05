@@ -161,8 +161,8 @@ def main(args):
 
     criterion = nn.CrossEntropyLoss()
     criterionMap = nn.BCEWithLogitsLoss() #nn.BCELoss()
-    lbda_main = 1.5
-    lbda_edge = 0.5
+    lbda_main = 2
+    lbda_edge = 1
     last_auc = 0
     last_val_auc = 0
     weight_dict = {}

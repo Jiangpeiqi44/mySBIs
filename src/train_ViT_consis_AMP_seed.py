@@ -78,6 +78,7 @@ def main(args):
     cfg = load_json(args.config)
 
     seed = 42   # 默认 seed = 5
+    seed_interval = 1
     seed_torch(seed)
     torch.backends.cudnn.deterministic = False
     torch.backends.cudnn.benchmark = True  # False
@@ -91,23 +92,23 @@ def main(args):
         phase='train', image_size=image_size, n_frames=8)
     val_dataset = SBI_Dataset(phase='val', image_size=image_size, n_frames=8)
 
-    train_loader = DataLoaderX(train_dataset,
+    train_loader = torch.utils.data.DataLoader(train_dataset,
                                                batch_size=batch_size//2,
                                                shuffle=True,
                                                collate_fn=train_dataset.collate_fn,
                                                num_workers=15,
                                                pin_memory=True,
                                                drop_last=True,
-                                               prefetch_factor=1
+                                               prefetch_factor=3
                                                )
     # ,worker_init_fn=train_dataset.worker_init_fn
-    val_loader = DataLoaderX(val_dataset,
+    val_loader = torch.utils.data.DataLoader(val_dataset,
                                              batch_size=batch_size//2,
                                              shuffle=False,
                                              collate_fn=val_dataset.collate_fn,
                                              num_workers=15,
                                              pin_memory=True,
-                                             prefetch_factor=1
+                                             prefetch_factor=3
                                              )
     # ,worker_init_fn=val_dataset.worker_init_fn
 
@@ -174,7 +175,7 @@ def main(args):
     
 
     for epoch in range(n_epoch):
-        seed_torch(seed + epoch)
+        seed_torch(seed + epoch//seed_interval)
         train_loss = 0.
         train_acc = 0.
         model.train(mode=True)
@@ -215,7 +216,7 @@ def main(args):
         val_acc = 0.
         output_dict = []
         target_dict = []
-        seed_torch(seed + epoch)
+        seed_torch(seed + epoch//seed_interval)
         for step, data in enumerate(tqdm(val_loader)):
             img = data['img'].to(device, non_blocking=True).float()
             target = data['label'].to(device, non_blocking=True).long()

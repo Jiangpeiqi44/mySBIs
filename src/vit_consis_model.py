@@ -978,8 +978,8 @@ class VisionTransformer_consisv5(nn.Module):
             localization_map = torch.softmax(attn_patch_qk_map, dim=-1) # [B,196,196] 
             localization_map = convert_consis_3(localization_map) # [B,196,196]
             localization_map = nn.functional.interpolate(localization_map.unsqueeze(1),size=(14,14),mode='bilinear',align_corners=False) # [B,1,14,14]
-            localization_map = localization_map.reshape(B,1,PP).detach()  # 在这里断开梯度
-            x = torch.cat([x, torch.bmm(localization_map, patch_token).squeeze(1)], -1)  # [B,768*2]  
+            localization_map = localization_map.reshape(B,1,PP)  
+            x = torch.cat([x, torch.bmm(localization_map, patch_token).squeeze(1).detach()], -1)  # [B,768*2]   # 在这里断开梯度
             # # 直接送入head
             x = self.head(x)
         return x, last_patch_token
@@ -1262,34 +1262,6 @@ class Vit_hDRMLPv2_consisv2(nn.Module):
         x = self.custom_embed(x)
         cls_token, _ = self.vit_model(x)
         return cls_token
-
-# class Vit_hDRMLPv2_consisv3(nn.Module):
-#     '''第k层单头KQ映射 平均Attn用来Assemble第k层'''
-#     def __init__(self, weight_pth=None, attn_list=[4,5,6],feat_block=11):
-#         super().__init__()
-#         self.vit_model = vit_base_patch16_224_in21k_consisv2(
-#             num_classes=2, has_logits=False, isEmbed=False, keepEmbedWeight=False, attn_list=attn_list, feat_block=feat_block)
-#         self.custom_embed = hDRMLPv2_embed(weight_pth)
-#         # consis-1
-#         self.KQ = nn.Linear(768, 768*2)
-#         self.scale = 768 ** -0.5
-       
-#     def forward(self, x):
-#         x = self.custom_embed(x)
-#         cls_token, patch_token = self.vit_model(x)
-#         B, PP, C = patch_token.shape  # [B, 196, 768]
-#         kq = self.KQ(patch_token).reshape(B, PP, 2, C).permute(2, 0, 1, 3)    # reshape参数:[batch,patch token, qk_num, c/]
-#         k, q = kq[0], kq[1]  # [B,2,PP,C//2]
-#         # # consis-1
-#         attn_map = k@q.transpose(-2, -1)* self.scale
-#         # 这里在损失函数中用sigmoid激活
-#         consis_map_main = attn_map
-#         return cls_token, consis_map_main
-
-#     def test_time(self, x):
-#         x = self.custom_embed(x)
-#         cls_token, _ = self.vit_model(x)
-#         return cls_token
 
 class Vit_hDRMLPv2_consisv3(nn.Module):
     '''第k层多头KQ映射 平均Attn用来Assemble第12层'''

@@ -27,7 +27,7 @@ import traceback
 warnings.filterwarnings('ignore')
 
 # win version ?
-if os.path.isfile('src/utils/library/vit_gen_pcl_CDF .py'):
+if os.path.isfile('src/utils/library/vit_gen_pcl_CDF.py'):
     sys.path.append(
         'src/utils/library/')
     print('exist library')
@@ -44,7 +44,7 @@ def init_CDF(phase, level='frame', n_frames=8):
 
     folder_list = sorted(glob(dataset_path+'*'))
     list_dict = np.load('data/Celeb-DF-v2/SBI_ablation/{}.npy'.format(phase))
-    folder_list = [i for i in folder_list if i.split('/')[-2] in list_dict]
+    folder_list = [i for i in folder_list if i.split('/')[-1] in list_dict]
 
     # print(len(folder_list))
     if level == 'video':

@@ -28,8 +28,12 @@ def name_resolve(path):
     name = os.path.splitext(os.path.basename(path))[0]
     '''CDF的命名为id_id_frame or id_frame'''
     vid_id = name.split('_')[:-1]
+    if len(vid_id) == 1:
+        vid_id_ret = vid_id[0]
+    elif len(vid_id) == 2:
+        vid_id_ret = vid_id[0]+'_'+vid_id[1]
     frame_id = name.split('_')[-1]
-    return vid_id, frame_id
+    return vid_id_ret, frame_id
 
 
 def total_euclidean_distance(a, b):

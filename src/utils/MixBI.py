@@ -23,6 +23,7 @@ from skimage.transform import PiecewiseAffineTransform, warp
 from skimage.metrics import structural_similarity as compare_ssim
 import warnings
 import traceback
+
 warnings.filterwarnings('ignore')
 
 # win version ?
@@ -41,7 +42,12 @@ class SBI_Dataset(Dataset):
         assert phase in ['train', 'val', 'test']
 
         image_list, label_list = init_ff(phase, 'frame', n_frames=n_frames)
-
+        with open('src/utils/err_face_{}.json'.format(phase), 'r') as f:
+            self.err_face_json = json.load(f)
+        # print(len(image_list))
+        label_list = [label_list[i] for i in range(len(image_list)) if self.err_face_json[image_list[i].split('/')[-2]+'_'+image_list[i].split('/')[-1]]==True]
+        image_list = [image_list[i] for i in range(len(image_list)) if self.err_face_json[image_list[i].split('/')[-2]+'_'+image_list[i].split('/')[-1]]==True]
+        # print(len(image_list))
         path_lm = '/landmarks/'
         label_list = [label_list[i] for i in range(len(image_list)) if os.path.isfile(image_list[i].replace(
             '/frames/', path_lm).replace('.png', '.npy')) and os.path.isfile(image_list[i].replace('/frames/', '/retina/').replace('.png', '.npy'))]
@@ -57,7 +63,7 @@ class SBI_Dataset(Dataset):
         self.n_frames = n_frames
         self.transforms = self.get_transforms()
         self.source_transforms = self.get_source_transforms()
-
+    
     def __len__(self):
         return len(self.image_list)
 
@@ -102,7 +108,7 @@ class SBI_Dataset(Dataset):
                         # windows的bug
                         # idt_dir = [i.replace('\\', '/') for i in idt_dir]
                         idt_dir = [idt_dir[i] for i in range(len(idt_dir)) if os.path.isfile(idt_dir[i].replace(
-                            '/frames/', self.path_lm).replace('.png', '.npy')) and os.path.isfile(idt_dir[i].replace('/frames/', '/retina/').replace('.png', '.npy'))]
+                            '/frames/', self.path_lm).replace('.png', '.npy')) and os.path.isfile(idt_dir[i].replace('/frames/', '/retina/').replace('.png', '.npy')) and self.err_face_json[idt_dir[i].split('/')[-2]+'_'+idt_dir[i].split('/')[-1]]==True]
                         self.bi.ibi_data_list = idt_dir
                     # # 生成
                     # print(filename)
@@ -180,7 +186,6 @@ class SBI_Dataset(Dataset):
                     mask_bi = mask_bi[y0_new:y1_new, x0_new:x1_new]
                     
 
-                
                 # if self.phase == 'train' and np.random.rand() < 0.5:
                 if False:
                     # ## 进行基于SSIM的动态增强
@@ -254,22 +259,6 @@ class SBI_Dataset(Dataset):
                 img_f = img_f.transpose((2, 0, 1))
                 img_r = img_r.transpose((2, 0, 1))
 
-                # # 基于SSIM的一致性Map生成
-                # map_shape = 14  # 224/16 = 14
-                # ssim_patch = np.zeros((map_shape, map_shape))
-                # ssim_map = cv2.resize(
-                #     ssim_map, self.image_size, interpolation=cv2.INTER_LINEAR).astype('float32')
-                # for i in range(map_shape):
-                #     for j in range(map_shape):
-                #         ssim_patch[i, j] = (
-                #             ssim_map[16*i:16*(i+1), 16*j:16*(j+1)]).mean()
-
-                # mask_f = cv2.resize(
-                #     mask, (map_shape, map_shape), interpolation=cv2.INTER_LINEAR).astype('float32')
-
-                # mask_r = np.ones((196, 196),dtype='float32')
-                # mask_f = self.Consistency2D(mask_f)  # ssim_patch，mask_f
-
                 flag = False
             except Exception as e:
                 print(e)
@@ -278,12 +267,10 @@ class SBI_Dataset(Dataset):
                 idx = torch.randint(low=0, high=len(self), size=(1,)).item()
 
         return img_f, img_r
-
     def Consistency2D(self, mask):
-        real_mask = mask.flatten()  # shape like [1,196]
-        real_mask = real_mask.reshape((1,)+real_mask.shape)
-        consis_map = [np.squeeze(1 - abs(m - real_mask))
-                      for m in real_mask[0, :]]
+        real_mask = mask.reshape(1,-1)
+        consis_map = [np.squeeze(1 - abs(real_mask[0,i] - real_mask))
+                      for i in range(real_mask.shape[1])]
         return np.array(consis_map)
 
     def get_source_transforms(self):
@@ -494,7 +481,7 @@ class SBI_Dataset(Dataset):
         return img, mask, landmark_new, bbox_new
 
     def collate_fn(self, batch):
-        img_f, img_r = zip(*batch)
+        img_f, img_r= zip(*batch)
         data = {}
         data['img'] = torch.cat(
             [torch.tensor(img_r).float(), torch.tensor(img_f).float()], 0)
@@ -537,7 +524,7 @@ if __name__ == '__main__':
     # image_dataset = SBI_Dataset(phase='test', image_size=256)
     # batch_size = 64
     image_dataset = SBI_Dataset(phase='train', image_size=224, n_frames=2)
-    batch_size = 16
+    batch_size = 1
     dataloader = torch.utils.data.DataLoader(image_dataset,
                                              batch_size=batch_size,
                                              shuffle=True,
@@ -557,7 +544,7 @@ if __name__ == '__main__':
     print(data['label'])
     # print(data['mask'].shape)
     img = data['img']
-    map = data['map']
+    map = data['map_x_ray']
     # print(img.keys())
     img = img.view((-1, 3, 224, 224))
     map = map.view((-1, 1, 196, 196))
@@ -574,8 +561,8 @@ if __name__ == '__main__':
                      normalize=False, range=(0, 1))
     # utils.save_image(map_f, 'imgs/map_fake.png', nrow=batch_size,
     #                  normalize=False, range=(0, 1))
-    # map_f_cpu = convert_consis(torch.squeeze(map_f).cpu().data.numpy())
-    # Image.fromarray(np.uint8(map_f_cpu*255)).save('imgs/consis_img.png')
+    map_f_cpu = convert_consis(torch.squeeze(map_f).cpu().data.numpy())
+    Image.fromarray(np.uint8(map_f_cpu*255)).save('imgs/consis_img.png')
     if False:
         mask_0 = data['mask']
         for im in range(2):

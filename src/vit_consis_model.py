@@ -714,8 +714,8 @@ class VisionTransformer_consisv3(nn.Module):
             localization_map = torch.softmax(attn_patch_qk_map, dim=-1) # [B,196,196] 
             localization_map = convert_consis_3(localization_map) # [B,196,196]
             localization_map = nn.functional.interpolate(localization_map.unsqueeze(1),size=(14,14),mode='bilinear',align_corners=False) # [B,1,14,14]
-            localization_map = localization_map.reshape(B,1,PP).detach()
-            x = torch.cat([x, torch.bmm(localization_map, last_patch_token).squeeze(1)], -1)  # [B,768*2]   # 这里之前的版本有bug
+            localization_map = localization_map.reshape(B,1,PP)
+            x = torch.cat([x, torch.bmm(localization_map, last_patch_token).squeeze(1).detach()], -1)  # [B,768*2]   # 这里之前的版本有bug
             # # 直接送入head
             x = self.head(x)
         return x, patch_token
@@ -1265,7 +1265,7 @@ class Vit_hDRMLPv2_consisv2(nn.Module):
 
 class Vit_hDRMLPv2_consisv3(nn.Module):
     '''第k层多头KQ映射 平均Attn用来Assemble第12层'''
-    def __init__(self, weight_pth=None, attn_list=[5,6,7],feat_block=5):
+    def __init__(self, weight_pth=None, attn_list=[6,7,8],feat_block=8):
         super().__init__()
         self.vit_model = vit_base_patch16_224_in21k_consisv3(
             num_classes=2, has_logits=False, isEmbed=False, keepEmbedWeight=False, attn_list=attn_list, feat_block=feat_block)

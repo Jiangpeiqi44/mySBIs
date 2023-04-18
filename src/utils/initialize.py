@@ -29,8 +29,7 @@ def init_ff(phase, level='frame', n_frames=8):
     for i in list_dict:
         filelist += i
     # print(filelist)
-    folder_list = [i for i in folder_list if os.path.basename(i)[
-        :3] in filelist]
+    folder_list = [i for i in folder_list if os.path.basename(i)[:3] in filelist]
     # print(len(folder_list))
     if level == 'video':
         label_list = [0]*len(folder_list)

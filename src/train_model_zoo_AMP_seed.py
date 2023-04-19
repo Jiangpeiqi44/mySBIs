@@ -217,7 +217,7 @@ def main(args):
             img = data['img'].to(device, non_blocking=True).float()
             target = data['label'].to(device, non_blocking=True).long()
             with torch.no_grad():
-                output = model.test_time(img)
+                output = model(img)
                 loss = criterion(output, target)
             loss_value = loss.item()
             iter_loss.append(loss_value)

@@ -35,10 +35,10 @@ def select_model(type):
         model = TransferModel('xception', dropout=0.5, inc=3)
         return model
     elif type=='EFNB0':
-        model = EfficientNet.from_pretrained("efficientnet-b0",advprop=True,num_classes=2)
+        model = EfficientNet.from_pretrained("efficientnet-b0",advprop=True,num_classes=2, weights_path='src/adv-efficientnet-b0-b64d5a18.pth')
         return model
     elif type=='EFNB4':
-        model = EfficientNet.from_pretrained("efficientnet-b4",advprop=True,num_classes=2)
+        model = EfficientNet.from_pretrained("efficientnet-b4",advprop=True,num_classes=2 ,weights_path='src/adv-efficientnet-b4-44fb3a87.pth')
         return model
     elif type=='Res50':
         model = resnet50(num_classes=2)
@@ -50,4 +50,4 @@ def select_model(type):
         return model
         
 if __name__ == '__main__':
-    select_model('Res50')
+    select_model('EFNB4')

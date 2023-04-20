@@ -9,6 +9,7 @@ import warnings
 # from utils.bi_wavelet import SBI_Dataset
 # from utils.sbi_default import SBI_Dataset
 from utils.MixBI_UIA import SBI_Dataset
+from utils.MixBI_UIA_FF_Fake import FF_Dataset
 from utils.scheduler import LinearDecayLR
 from sklearn.metrics import confusion_matrix, roc_auc_score
 import argparse
@@ -16,7 +17,7 @@ from utils.logs import log
 from utils.funcs import load_json
 from datetime import datetime
 from tqdm import tqdm
-from vit_consis_model import Vit_hDRMLPv2_consisv6 as Net
+from vit_consis_model import Vit_hDRMLPv2_consisv5 as Net
 from torch.cuda.amp import autocast as autocast, GradScaler
 import math
 from prefetch_generator import BackgroundGenerator
@@ -92,7 +93,11 @@ def main(args):
         phase='train', image_size=image_size, n_frames=8)
     val_dataset = SBI_Dataset(phase='val', image_size=image_size, n_frames=8)
 
-    train_loader = DataLoaderX(train_dataset,
+    ff_fake_dataset = FF_Dataset(phase='train', image_size=image_size, n_frames=32)
+    train_dataset_full = torch.utils.data.ConcatDataset([train_dataset, ff_fake_dataset])
+    
+    
+    train_loader = torch.utils.data.DataLoader(train_dataset_full,
                                batch_size=batch_size//2,
                                shuffle=True,
                                collate_fn=train_dataset.collate_fn,
@@ -102,7 +107,7 @@ def main(args):
                                prefetch_factor=3
                                )
     # ,worker_init_fn=train_dataset.worker_init_fn
-    val_loader = DataLoaderX(val_dataset,
+    val_loader = torch.utils.data.DataLoader(val_dataset,
                              batch_size=batch_size//2,
                              shuffle=False,
                              collate_fn=val_dataset.collate_fn,

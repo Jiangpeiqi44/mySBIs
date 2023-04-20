@@ -1107,7 +1107,7 @@ class VisionTransformer_consisv6(nn.Module):
             B, PP, C = patch_token.shape
             localization_map = torch.mean(attn_block[:,:, 0, 1:], dim=1, keepdim=False) # [B,1,PP+1,PP+1] 
             # attn_patch_qk_map = attn_qk_map_avg[:, 1:, 1:] # 计算平均patch token之间的qk map [B,196,196]
-            # localization_map = torch.softmax(attn_patch_qk_map, dim=-1) # [B,196,196] 
+            localization_map = torch.softmax(localization_map, dim=-1) # [B,196,196] 
             # localization_map = convert_consis_3(localization_map) # [B,196,196]
             # localization_map = nn.functional.interpolate(localization_map.unsqueeze(1),size=(14,14),mode='bilinear',align_corners=False) # [B,1,14,14]
             localization_map = localization_map.reshape(B,1,PP)  
@@ -1484,7 +1484,7 @@ class Vit_hDRMLPv2_consisv4(nn.Module):
 
 class Vit_hDRMLPv2_consisv5(nn.Module):
     '''第12层多头KQ映射 平均Attn用来Assemble第k层'''
-    def __init__(self, weight_pth=None, attn_list=[5,6,7],feat_block=7):
+    def __init__(self, weight_pth=None, attn_list=[4,5,6],feat_block=6):
         super().__init__()
         self.vit_model = vit_base_patch16_224_in21k_consisv5(
             num_classes=2, has_logits=False, isEmbed=False, keepEmbedWeight=False, attn_list=attn_list, feat_block=feat_block)

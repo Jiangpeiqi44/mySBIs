@@ -8,7 +8,7 @@ import warnings
 # from utils.ibi_wavelet import SBI_Dataset
 # from utils.bi_wavelet import SBI_Dataset
 # from utils.sbi_default import SBI_Dataset
-from utils.MixBI_UIA import SBI_Dataset
+from utils.MixBI import SBI_Dataset
 from utils.scheduler import LinearDecayLR
 from sklearn.metrics import confusion_matrix, roc_auc_score
 import argparse
@@ -16,7 +16,7 @@ from utils.logs import log
 from utils.funcs import load_json
 from datetime import datetime
 from tqdm import tqdm
-from vit_consis_model import Vit_hDRMLPv2_consisv6 as Net
+from model_zoo import select_model as Net
 from torch.cuda.amp import autocast as autocast, GradScaler
 import math
 from prefetch_generator import BackgroundGenerator
@@ -92,27 +92,29 @@ def main(args):
         phase='train', image_size=image_size, n_frames=8)
     val_dataset = SBI_Dataset(phase='val', image_size=image_size, n_frames=8)
 
-    train_loader = DataLoaderX(train_dataset,
+    train_loader = torch.utils.data.DataLoader(train_dataset,
                                batch_size=batch_size//2,
                                shuffle=True,
                                collate_fn=train_dataset.collate_fn,
-                               num_workers=14,
+                               num_workers=12,
                                pin_memory=True,
                                drop_last=True,
-                               prefetch_factor=3
+                               prefetch_factor=3,
+                               worker_init_fn=train_dataset.worker_init_fn
                                )
     # ,worker_init_fn=train_dataset.worker_init_fn
-    val_loader = DataLoaderX(val_dataset,
+    val_loader = torch.utils.data.DataLoader(val_dataset,
                              batch_size=batch_size//2,
                              shuffle=False,
                              collate_fn=val_dataset.collate_fn,
-                             num_workers=14,
+                             num_workers=12,
                              pin_memory=True,
-                             prefetch_factor=3
+                             prefetch_factor=3,
+                             worker_init_fn=val_dataset.worker_init_fn
                              )
     # ,worker_init_fn=val_dataset.worker_init_fn
 
-    model = Net()
+    model = Net('EFNB0')
 
     model = model.to('cuda')
     pg = [p for p in model.parameters() if p.requires_grad]
@@ -161,13 +163,11 @@ def main(args):
 
     criterion = nn.CrossEntropyLoss()
     criterionMap = nn.BCEWithLogitsLoss() #nn.BCELoss()
-    lbda_main = 2
-    lbda_edge = 2
     last_auc = 0
     last_val_auc = 0
     weight_dict = {}
     n_weight = 5
-    save_interval = 10 # 保存间隔
+    save_interval = 100 # 保存间隔
     # 添加针对loss最小的几组pth
     weight_dict_loss = {}
     n_weight_loss = 0
@@ -176,22 +176,17 @@ def main(args):
     
 
     for epoch in range(n_epoch):
-        seed_torch(seed + epoch//seed_interval)
+        np.random.seed(seed + epoch//seed_interval)
         train_loss = 0.
         train_acc = 0.
         model.train(mode=True)
         for step, data in enumerate(tqdm(train_loader)):
             img = data['img'].to(device, non_blocking=True).float()
             target = data['label'].to(device, non_blocking=True).long()
-            target_map = data['map'].to(device, non_blocking=True).float()
-            target_map_x_ray = data['map_x_ray'].to(device, non_blocking=True).float()
             optimizer.zero_grad()
             with autocast():
-                output, map_mid, map_last= model(img) # 中间层map 最后一层map
-                loss_cls = criterion(output, target)
-                loss_map = criterionMap(map_mid, target_map)
-                loss_map_x_ray = criterionMap(map_last, target_map_x_ray)
-                loss = loss_cls + lbda_main*loss_map + lbda_edge*loss_map_x_ray
+                output = model(img) # 中间层map 最后一层map
+                loss = criterion(output, target)
             # loss.backward()
             # optimizer.step()
             scaler.scale(loss).backward()
@@ -219,12 +214,12 @@ def main(args):
         val_acc = 0.
         output_dict = []
         target_dict = []
-        seed_torch(seed + epoch//seed_interval)
+        np.random.seed(seed)
         for step, data in enumerate(tqdm(val_loader)):
             img = data['img'].to(device, non_blocking=True).float()
             target = data['label'].to(device, non_blocking=True).long()
             with torch.no_grad():
-                output = model.test_time(img)
+                output = model(img)
                 loss = criterion(output, target)
             loss_value = loss.item()
             iter_loss.append(loss_value)

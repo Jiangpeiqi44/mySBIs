@@ -94,14 +94,13 @@ def main(args):
     val_dataset = SBI_Dataset(phase='val', image_size=image_size, n_frames=8)
 
     ff_fake_dataset = FF_Dataset(phase='train', image_size=image_size, n_frames=32)
-    train_dataset_full = torch.utils.data.ConcatDataset([train_dataset, ff_fake_dataset])
     
     
-    train_loader = torch.utils.data.DataLoader(train_dataset_full,
-                               batch_size=batch_size//2,
+    train_loader = torch.utils.data.DataLoader(train_dataset,
+                               batch_size=batch_size//4,
                                shuffle=True,
                                collate_fn=train_dataset.collate_fn,
-                               num_workers=14,
+                               num_workers=12,
                                pin_memory=True,
                                drop_last=True,
                                prefetch_factor=3
@@ -111,12 +110,23 @@ def main(args):
                              batch_size=batch_size//2,
                              shuffle=False,
                              collate_fn=val_dataset.collate_fn,
-                             num_workers=14,
+                             num_workers=12,
                              pin_memory=True,
                              prefetch_factor=3
                              )
     # ,worker_init_fn=val_dataset.worker_init_fn
-
+    
+    train_loader_fake = torch.utils.data.DataLoader(ff_fake_dataset,
+                               batch_size=batch_size//2,
+                               shuffle=True,
+                               collate_fn=ff_fake_dataset.collate_fn,
+                               num_workers=4,
+                               pin_memory=True,
+                               drop_last=True,
+                               prefetch_factor=3
+                               )
+   
+    
     model = Net()
 
     model = model.to('cuda')
@@ -185,11 +195,21 @@ def main(args):
         train_loss = 0.
         train_acc = 0.
         model.train(mode=True)
-        for step, data in enumerate(tqdm(train_loader)):
-            img = data['img'].to(device, non_blocking=True).float()
-            target = data['label'].to(device, non_blocking=True).long()
-            target_map = data['map'].to(device, non_blocking=True).float()
-            target_map_x_ray = data['map_x_ray'].to(device, non_blocking=True).float()
+        dataloader_iterator1 = iter(train_loader)
+    
+        for i, data2 in enumerate(train_loader_fake):
+
+            try:
+                data1 = next(dataloader_iterator1)
+            except StopIteration:
+                dataloader_iterator1 = iter(train_loader)
+                data1 = next(dataloader_iterator1)
+
+        # for step, data in enumerate(tqdm(train_loader)):
+            img = torch.cat(data1['img'],data2['img']).to(device, non_blocking=True).float()
+            target = torch.cat(data1['label'],data2['label']).to(device, non_blocking=True).long()
+            target_map = torch.cat(data1['map'],data2['map']).to(device, non_blocking=True).float()
+            target_map_x_ray = torch.cat(data1['map_x_ray'],data2['map_x_ray']).to(device, non_blocking=True).float()
             optimizer.zero_grad()
             with autocast():
                 output, map_mid, map_last= model(img) # 中间层map 最后一层map

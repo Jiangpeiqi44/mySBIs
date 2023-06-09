@@ -16,7 +16,8 @@ from utils.logs import log
 from utils.funcs import load_json
 from datetime import datetime
 from tqdm import tqdm
-from vit_consis_model import Vit_hDRMLPv2_consisv6 as Net
+# from vit_consis_model import Vit_hDRMLPv2_consisv5 as Net
+from pcc_vit_dev import PCC_ViT_dev1 as Net
 from torch.cuda.amp import autocast as autocast, GradScaler
 import math
 from prefetch_generator import BackgroundGenerator
@@ -96,7 +97,7 @@ def main(args):
                                batch_size=batch_size//2,
                                shuffle=True,
                                collate_fn=train_dataset.collate_fn,
-                               num_workers=14,
+                               num_workers=13,
                                pin_memory=True,
                                drop_last=True,
                                prefetch_factor=3
@@ -106,7 +107,7 @@ def main(args):
                              batch_size=batch_size//2,
                              shuffle=False,
                              collate_fn=val_dataset.collate_fn,
-                             num_workers=14,
+                             num_workers=13,
                              pin_memory=True,
                              prefetch_factor=3
                              )
@@ -219,7 +220,8 @@ def main(args):
         val_acc = 0.
         output_dict = []
         target_dict = []
-        seed_torch(seed + epoch//seed_interval)
+        # seed_torch(seed + epoch//seed_interval)
+        seed_torch(seed)   # val fix seed
         for step, data in enumerate(tqdm(val_loader)):
             img = data['img'].to(device, non_blocking=True).float()
             target = data['label'].to(device, non_blocking=True).long()

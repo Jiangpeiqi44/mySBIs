@@ -1,39 +1,34 @@
 import os
 import torch
+import torchvision
 import torch.nn as nn
 import torch.nn.functional as F
 import numpy as np
+# from PIL import Image
+# import sys
 import random
 import warnings
-# from utils.ibi_wavelet import SBI_Dataset
-# from utils.bi_wavelet import SBI_Dataset
-# from utils.sbi_default import SBI_Dataset
-from utils.MixBI_UIA import SBI_Dataset
-from utils.MixBI_UIA_FF_Fake import FF_Dataset
-from utils.scheduler import LinearDecayLR
-from sklearn.metrics import confusion_matrix, roc_auc_score
+# from utils.scheduler import LinearDecayLR
+# from sklearn.metrics import confusion_matrix, roc_auc_score
 import argparse
 from utils.logs import log
 from utils.funcs import load_json
 from datetime import datetime
 from tqdm import tqdm
-from vit_consis_model import Vit_hDRMLPv2_consisv5 as Net
+# from vit_custom_model import Vit_hDRMLPv3_ImageNet as Net
+from model_zoo import select_model as Net
 from torch.cuda.amp import autocast as autocast, GradScaler
 import math
-from prefetch_generator import BackgroundGenerator
+import torchvision.transforms as transforms
 
-
-class DataLoaderX(torch.utils.data.DataLoader):
-
-    def __iter__(self):
-        return BackgroundGenerator(super().__iter__())
-
+# os.environ['CUDA_LAUNCH_BLOCKING'] = '1'
+# os.environ['CUDA_VISIBAL_DEVICES'] ='0'
 def compute_accuray(pred, true):
     pred_idx = pred.argmax(dim=1).cpu().data.numpy()
     tmp = pred_idx == true.cpu().numpy()
     return sum(tmp)/len(pred_idx)
 
-def seed_torch(seed):
+def seed_torch(seed=1029):
 	random.seed(seed)
 	np.random.seed(seed)
 	torch.manual_seed(seed)
@@ -79,7 +74,6 @@ def main(args):
     cfg = load_json(args.config)
 
     seed = 42   # 默认 seed = 5
-    seed_interval = 1
     seed_torch(seed)
     torch.backends.cudnn.deterministic = False
     torch.backends.cudnn.benchmark = True  # False
@@ -89,63 +83,63 @@ def main(args):
 
     image_size = cfg['image_size']
     batch_size = cfg['batch_size']
-    train_dataset = SBI_Dataset(
-        phase='train', image_size=image_size, n_frames=8)
-    val_dataset = SBI_Dataset(phase='val', image_size=image_size, n_frames=8)
+    data_transform = transforms.Compose([
+        transforms.Resize(image_size),
+        transforms.CenterCrop(image_size),
+        transforms.ToTensor(),
+        transforms.Normalize(mean=[0.485, 0.456, 0.406],
+                    	     std=[0.229, 0.224, 0.225])
+    ])
+    train_dataset = torchvision.datasets.ImageFolder(root='aigc_train/',transform=data_transform)
+    val_dataset = torchvision.datasets.ImageFolder(root='aigc_val/',transform=data_transform)
 
-    ff_fake_dataset = FF_Dataset(phase='train', image_size=image_size, n_frames=8)
-    
-    
     train_loader = torch.utils.data.DataLoader(train_dataset,
-                               batch_size=batch_size//4,
-                               shuffle=True,
-                               collate_fn=train_dataset.collate_fn,
-                               num_workers=12,
-                               pin_memory=True,
-                               drop_last=True,
-                               prefetch_factor=3
-                               )
-    # ,worker_init_fn=train_dataset.worker_init_fn
+                                               batch_size=batch_size,
+                                               shuffle=True,
+                                               num_workers=8,
+                                               pin_memory=True,
+                                               drop_last=True
+                                               )
     val_loader = torch.utils.data.DataLoader(val_dataset,
-                             batch_size=batch_size//2,
-                             shuffle=False,
-                             collate_fn=val_dataset.collate_fn,
-                             num_workers=12,
-                             pin_memory=True,
-                             prefetch_factor=3
-                             )
-    # ,worker_init_fn=val_dataset.worker_init_fn
+                                             batch_size=batch_size,
+                                             shuffle=False,
+                                             num_workers=8,
+                                             pin_memory=True
+                                             )
     
-    train_loader_fake = torch.utils.data.DataLoader(ff_fake_dataset,
-                               batch_size=batch_size//2,
-                               shuffle=True,
-                               collate_fn=ff_fake_dataset.collate_fn,
-                               num_workers=8,
-                               pin_memory=True,
-                               drop_last=True,
-                               prefetch_factor=3
-                               )
-   
-    
-    model = Net()
+    # model = Net()
+    model = Net('EFNB4')
 
     model = model.to('cuda')
-    pg = [p for p in model.parameters() if p.requires_grad]
-    # optimizer = torch.optim.SGD(pg, lr=1e-3, momentum=0.9, weight_decay=5E-5)
-    optimizer = torch.optim.AdamW(
-        pg, lr=4e-5, betas=(0.9, 0.999), weight_decay=0.3)  # 6e-5  3e-5  2e-5 wd默认1e-2
-    # optimizer = torch.optim.AdamW(
-    #     model.parameters(), lr=2e-5, betas=(0.9, 0.999))
+    
      ## add 载入已训练
     if args.weight_name is not None:
         cnn_sd = torch.load(args.weight_name)["model"]
-        
-        del_keys = ['vit_model.head.weight', 'vit_model.head.bias']
-        for k in del_keys:
-            del cnn_sd[k]
-            
         print(model.load_state_dict(cnn_sd,strict=False))
         print('Load pretrained model...')
+ 
+        # for name, para in model.named_parameters():
+        #     # 除head, pre_logits外 其他权重全部冻结
+        #     if "head" not in name and "pre_logits" not in name and 'hproj' not in name:
+        #         para.requires_grad_(False)
+        #     else:
+        #         print("training {}".format(name))
+    ## DEBUG
+    # for name, para in model.named_parameters():
+    #    print(name) 
+    # print(aaaaa)
+    ##
+    # for name, para in model.named_parameters():
+    #     # 除head, pre_logits conv外 其他权重全部冻结
+    #     if "head" not in name and "pre_logits" not in name and 'custom_embed' not in name :  
+    #         para.requires_grad_(False)
+    #     else:
+    #         print("training {}".format(name))
+    pg = [p for p in model.parameters() if p.requires_grad]
+    # optimizer = torch.optim.SGD(pg, lr=1e-3, momentum=0.9, weight_decay=5E-5)
+    optimizer = torch.optim.AdamW(
+        pg, lr=1e-4, betas=(0.9, 0.999), weight_decay=0.01)  # 6e-5  3e-5  2e-5 wd默认1e-2
+   
     iter_loss = []
     train_losses = []
     test_losses = []
@@ -161,8 +155,8 @@ def main(args):
                                            T_max=n_epoch,
                                            eta_min=1.0e-8,
                                            last_epoch=-1,
-                                           warmup_steps=10,
-                                           warmup_start_lr=1.0e-7)
+                                           warmup_steps=2,
+                                           warmup_start_lr=1.0e-5)
     last_loss = 99999
     scaler = GradScaler()
     now = datetime.now()
@@ -175,48 +169,27 @@ def main(args):
     logger = log(path=save_path+"logs/", file="losses.logs")
 
     criterion = nn.CrossEntropyLoss()
-    criterionMap = nn.BCEWithLogitsLoss() #nn.BCELoss()
-    lbda_main = 2
-    lbda_edge = 2
     last_auc = 0
     last_val_auc = 0
     weight_dict = {}
-    n_weight = 5
-    save_interval = 10 # 保存间隔
+    n_weight = 0
     # 添加针对loss最小的几组pth
-    weight_dict_loss = {}
-    n_weight_loss = 0
-    # 
     last_val_loss = 0
-    
+    weight_dict_loss = {}
+    n_weight_loss = 2
 
     for epoch in range(n_epoch):
-        seed_torch(seed + epoch//seed_interval)
+        seed_torch(seed + epoch)
         train_loss = 0.
         train_acc = 0.
         model.train(mode=True)
-        dataloader_iterator1 = iter(train_loader)
-    
-        for i, data2 in enumerate(tqdm(train_loader_fake)):
-
-            try:
-                data1 = next(dataloader_iterator1)
-            except StopIteration:
-                dataloader_iterator1 = iter(train_loader)
-                data1 = next(dataloader_iterator1)
-
-        # for step, data in enumerate(tqdm(train_loader)):
-            img = torch.cat([data1['img'],data2['img']], 0).to(device, non_blocking=True).float()
-            target = torch.cat([data1['label'],data2['label']], 0).to(device, non_blocking=True).long()
-            target_map = torch.cat([data1['map'],data2['map']], 0).to(device, non_blocking=True).float()
-            target_map_x_ray = torch.cat([data1['map_x_ray'],data2['map_x_ray']],0).to(device, non_blocking=True).float()
+        for step, data in enumerate(tqdm(train_loader)):
+            img = data[0].to(device, non_blocking=True).float()
+            target = data[1].to(device, non_blocking=True).long()
             optimizer.zero_grad()
             with autocast():
-                output, map_mid, map_last= model(img) # 中间层map 最后一层map
-                loss_cls = criterion(output, target)
-                loss_map = criterionMap(map_mid, target_map)
-                loss_map_x_ray = criterionMap(map_last, target_map_x_ray)
-                loss = loss_cls + lbda_main*loss_map + lbda_edge*loss_map_x_ray
+                output = model(img)
+                loss = criterion(output, target)
             # loss.backward()
             # optimizer.step()
             scaler.scale(loss).backward()
@@ -229,14 +202,14 @@ def main(args):
             train_acc += acc
         lr_scheduler.step()
         print('lr: ', lr_scheduler.get_last_lr())
-        train_losses.append(train_loss/(len(train_loader)+len(train_loader_fake)))
-        train_accs.append(train_acc/(len(train_loader)+len(train_loader_fake)))
+        train_losses.append(train_loss/len(train_loader))
+        train_accs.append(train_acc/len(train_loader))
 
         log_text = "Epoch {}/{} | train loss: {:.4f}, train acc: {:.4f}, ".format(
             epoch+1,
             n_epoch,
-            train_loss/(len(train_loader)+len(train_loader_fake)),
-            train_acc/(len(train_loader)+len(train_loader_fake)),
+            train_loss/len(train_loader),
+            train_acc/len(train_loader),
         )
 
         model.train(mode=False)
@@ -244,13 +217,14 @@ def main(args):
         val_acc = 0.
         output_dict = []
         target_dict = []
-        seed_torch(seed + epoch//seed_interval)
+        seed_torch(seed)
         for step, data in enumerate(tqdm(val_loader)):
-            img = data['img'].to(device, non_blocking=True).float()
-            target = data['label'].to(device, non_blocking=True).long()
+            img = data[0].to(device, non_blocking=True).float()
+            target = data[1].to(device, non_blocking=True).long()
             with torch.no_grad():
-                output = model.test_time(img)
-                loss = criterion(output, target)
+                with autocast():
+                    output = model(img)
+                    loss = criterion(output, target)
             loss_value = loss.item()
             iter_loss.append(loss_value)
             val_loss += loss_value
@@ -260,42 +234,14 @@ def main(args):
             target_dict += target.cpu().data.numpy().tolist()
         val_losses.append(val_loss/len(val_loader))
         val_accs.append(val_acc/len(val_loader))
-        val_auc = roc_auc_score(target_dict, output_dict)
-        log_text += "val loss: {:.4f}, val acc: {:.4f}, val auc: {:.4f}".format(
+        
+        log_text += "val loss: {:.4f}, val acc: {:.4f}".format(
             val_loss/len(val_loader),
-            val_acc/len(val_loader),
-            val_auc
+            val_acc/len(val_loader)
         )
 
-        if len(weight_dict) < n_weight:
-            save_model_path = os.path.join(
-                save_path+'weights/', "{}_{:.4f}_val.tar".format(epoch+1, val_auc))
-            weight_dict[save_model_path] = val_auc
-            torch.save({
-                "model": model.state_dict(),
-                # "optimizer": optimizer.state_dict(),
-                "epoch": epoch
-            }, save_model_path)
-            last_val_auc = min([weight_dict[k] for k in weight_dict])
-
-        elif val_auc >= last_val_auc:
-            save_model_path = os.path.join(
-                save_path+'weights/', "{}_{:.4f}_val.tar".format(epoch+1, val_auc))
-            for k in weight_dict:
-                if weight_dict[k] == last_val_auc:
-                    del weight_dict[k]
-                    os.remove(k)
-                    weight_dict[save_model_path] = val_auc
-                    break
-            torch.save({
-                "model": model.state_dict(),
-                # "optimizer": optimizer.state_dict(),
-                "epoch": epoch
-            }, save_model_path)
-            last_val_auc = min([weight_dict[k] for k in weight_dict])
-
         # ## 针对loss最小添加筛选
-        if len(weight_dict_loss) < n_weight_loss and (epoch+1)/n_epoch >=0.5:
+        if len(weight_dict_loss) < n_weight_loss:
             save_model_path = os.path.join(
                 save_path+'weights/', "{}_{:.4f}_MINloss.tar".format(epoch+1, val_loss/len(val_loader)))
             weight_dict_loss[save_model_path] = val_loss/len(val_loader)
@@ -307,7 +253,7 @@ def main(args):
             last_val_loss = max([weight_dict_loss[k]
                                 for k in weight_dict_loss])
 
-        elif val_loss/len(val_loader) <= last_val_loss and (epoch+1)/n_epoch >= 0.5:
+        elif val_loss/len(val_loader) <= last_val_loss:
             save_model_path = os.path.join(
                 save_path+'weights/', "{}_{:.4f}_MINloss.tar".format(epoch+1, val_loss/len(val_loader)))
             for k in weight_dict_loss:
@@ -326,16 +272,13 @@ def main(args):
                                 for k in weight_dict_loss])
 
         logger.info(log_text)
-        
-        if  epoch % save_interval == 0 and (epoch+1)/n_epoch >= 0.5:
-         
-            save_model_path = os.path.join(
-                save_path+'weights/', "{}_{:.4f}_INT.tar".format(epoch+1, val_loss/len(val_loader)))
-            torch.save({
-                "model": model.state_dict(),
-                # "optimizer": model.optimizer.state_dict(),
-                "epoch": epoch
-            }, save_model_path)
+    save_model_path = os.path.join(
+        save_path+'weights/', "{}_last.tar".format(epoch+1))
+    torch.save({
+        "model": model.state_dict(),
+        # "optimizer": model.optimizer.state_dict(),
+        "epoch": epoch
+    }, save_model_path)
 
 
 if __name__ == '__main__':

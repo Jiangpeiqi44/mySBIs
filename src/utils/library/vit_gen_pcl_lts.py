@@ -15,7 +15,7 @@ import cv2
 # import tqdm
 import pywt
 from oragn_mask import get_five_key, mask_patch
-'''v6plus 经过筛选后的face'''
+'''基于MM版本修改 返回的Mask均没有乘系数 避免了面部边界的Bug'''
 def reorder_landmark(landmark):
     landmark_add = np.zeros((13, 2))
     for idx, idx_l in enumerate([77, 75, 76, 68, 69, 70, 71, 80, 72, 73, 79, 74, 78]):
@@ -297,6 +297,7 @@ class BIOnlineGeneration():
                     x, y, w, h = cv2.boundingRect((mask[:,:,0]*255).astype(np.uint8))
                     center = (x+w//2, y+h//2)
                     blended_face = cv2.seamlessClone(foreground_face, background_face, (mask*255).astype(np.uint8), center, cv2.NORMAL_CLONE)
+                    mask = get_blend_mask(mask[:, :, 0])              
                 else:
                     blended_face, mask = dynamic_blend(
                         foreground_face, background_face, mask[:, :, 0], blend_ratio=blend_ratio, blur_flag=blur_flag, x_ray=x_ray_flag)
@@ -501,7 +502,8 @@ def align_to_match(source, target):
 
 def dynamic_blend(source, target, mask, blend_ratio=None, blur_flag=True, x_ray=False):
     if blur_flag:
-        mask_blured = get_blend_mask(mask)
+        mask_blured_ori = get_blend_mask(mask)
+        mask_blured = mask_blured_ori
         if x_ray:
             mask_blured = 4 * (1 - mask_blured) * mask_blured
             blend_ratio = 1
@@ -514,9 +516,9 @@ def dynamic_blend(source, target, mask, blend_ratio=None, blur_flag=True, x_ray=
     mask_blured *= blend_ratio
     img_blended = (mask_blured * source + (1 - mask_blured) * target)
     if blur_flag:
-        mask_blured_ret = mask_blured
+        mask_blured_ret = mask_blured_ori
     else:
-        mask_blured_ret = get_blend_mask(mask)*blend_ratio
+        mask_blured_ret = get_blend_mask(mask)
     return img_blended, mask_blured_ret
 
 def wavelet_blend(source, target, mask, wavelet_type='bior3.3'):

@@ -24,11 +24,10 @@ from skimage.metrics import structural_similarity as compare_ssim
 import warnings
 import traceback
 
-# from utils.library.vit_gen_pcl import random_get_hull_debug
 warnings.filterwarnings('ignore')
 
 # win version ?
-if os.path.isfile('src/utils/library/vit_gen_pcl.py'):
+if os.path.isfile('src/utils/library/vit_gen_pcl_lts.py'):
     sys.path.append(
         'src/utils/library/')
     print('exist library')
@@ -43,7 +42,12 @@ class SBI_Dataset(Dataset):
         assert phase in ['train', 'val', 'test']
 
         image_list, label_list = init_ff(phase, 'frame', n_frames=n_frames)
-
+        with open('src/utils/err_face_{}.json'.format(phase), 'r') as f:
+            self.err_face_json = json.load(f)
+        # print(len(image_list))
+        label_list = [label_list[i] for i in range(len(image_list)) if self.err_face_json[image_list[i].split('/')[-2]+'_'+image_list[i].split('/')[-1]]==True]
+        image_list = [image_list[i] for i in range(len(image_list)) if self.err_face_json[image_list[i].split('/')[-2]+'_'+image_list[i].split('/')[-1]]==True]
+        # print(len(image_list))
         path_lm = '/landmarks/'
         label_list = [label_list[i] for i in range(len(image_list)) if os.path.isfile(image_list[i].replace(
             '/frames/', path_lm).replace('.png', '.npy')) and os.path.isfile(image_list[i].replace('/frames/', '/retina/').replace('.png', '.npy'))]
@@ -59,7 +63,7 @@ class SBI_Dataset(Dataset):
         self.n_frames = n_frames
         self.transforms = self.get_transforms()
         self.source_transforms = self.get_source_transforms()
-
+    
     def __len__(self):
         return len(self.image_list)
 
@@ -68,8 +72,8 @@ class SBI_Dataset(Dataset):
         while flag:
             try:
                 filename = self.image_list[idx]
-                # if np.random.rand() < 0.75:
-                if False:
+                if np.random.rand() < 0.75:
+                # if False:
                     # IBI与BI进行整合
 
                     # # 读取做背景图片的lm和bbox
@@ -104,7 +108,7 @@ class SBI_Dataset(Dataset):
                         # windows的bug
                         # idt_dir = [i.replace('\\', '/') for i in idt_dir]
                         idt_dir = [idt_dir[i] for i in range(len(idt_dir)) if os.path.isfile(idt_dir[i].replace(
-                            '/frames/', self.path_lm).replace('.png', '.npy')) and os.path.isfile(idt_dir[i].replace('/frames/', '/retina/').replace('.png', '.npy'))]
+                            '/frames/', self.path_lm).replace('.png', '.npy')) and os.path.isfile(idt_dir[i].replace('/frames/', '/retina/').replace('.png', '.npy')) and self.err_face_json[idt_dir[i].split('/')[-2]+'_'+idt_dir[i].split('/')[-1]]==True]
                         self.bi.ibi_data_list = idt_dir
                     # # 生成
                     # print(filename)
@@ -182,75 +186,7 @@ class SBI_Dataset(Dataset):
                     mask_bi = mask_bi[y0_new:y1_new, x0_new:x1_new]
                     
 
-                
-                # if self.phase == 'train' and np.random.rand() < 0.5:
-                if False:
-                    # ## 进行基于SSIM的动态增强
-                    ssim_score, ssim_map = compare_ssim(
-                    img_r, img_f, data_range=255, channel_axis=2, full=True)
-                    ssim_map = ssim_map.mean(axis=2)
-                    landmark = landmark_last
-                    mask_area = np.sum(mask_bi > 0)
-                    area_thresh = 0.5
-                    # ##随机选择 landmarks
-                    sample_times = 50
-                    mask_cut_T1 = np.zeros_like(img_r[:, :, 0])
-
-                    group_num = np.random.randint(1, 4)
-                    for k in range(group_num):
-                        choose_landmark_idx = []
-                        for i in range(sample_times):
-                            rand_len = np.random.randint(7, 28)
-                            step = np.random.randint(1, 3)
-                            rand_start_idx = np.random.randint(
-                                0, len(landmark)-rand_len)
-                            landmark_idx = list(
-                                range(rand_start_idx, rand_start_idx + rand_len, step))
-                            if np.random.rand() < 0.5:
-                                landmark_idx = len(landmark) - \
-                                    np.array(landmark_idx) - 1
-                            choose_landmark_idx.append(landmark_idx)
-                        choose_landmark = []
-                        ssim = []
-                        for idx in choose_landmark_idx:
-                            choose_landmark.append(
-                                np.array([landmark[i] for i in idx]))
-                        for landmark_for_cut in choose_landmark:
-                            mask_cut_iter = np.zeros_like(img_r[:, :, 0])
-                            cv2.fillConvexPoly(
-                                mask_cut_iter, cv2.convexHull(landmark_for_cut), 1.)
-                            # ## 使用Map对应均值求SSIM
-                            ssim_cut = (ssim_map*mask_cut_iter).sum() / \
-                                np.sum(mask_cut_iter == 1)
-                            # print(ssim_old,ssim_cut)
-                            ssim.append(ssim_cut)
-                        ssim_max_id = np.argmax(ssim)
-                        cv2.fillConvexPoly(mask_cut_T1, cv2.convexHull(
-                            choose_landmark[ssim_max_id]), 1.)
-
-                    mask_cut_T1 = mask_cut_T1.reshape(mask_cut_T1.shape+(1,))
-                    # 判断覆盖面积 v2
-                    T1_area = np.sum(mask_cut_T1*mask_bi > 0)
-                    # print(T1_area, mask_area)
-                    T1_flag = bool((T1_area/mask_area) < area_thresh)
-                    if T1_flag:
-                        rand_pixel = np.random.randint(
-                            0, 255, img_r.shape)  # (H,W,3)
-                        img_f = img_f * (1 - mask_cut_T1) + \
-                            rand_pixel * mask_cut_T1
-                        rand_pixel = np.random.randint(
-                            0, 255, img_r.shape)  # (H,W,3)
-                        img_r = img_r * (1 - mask_cut_T1) + \
-                            rand_pixel * mask_cut_T1
-                        img_f = img_f.astype(np.uint8)
-                        img_r = img_r.astype(np.uint8)
-                    # else:
-                    #     print('Mask Too Big...')
                 # # 完成合成操作，开始后处理
-                Image.fromarray(np.uint8(img_f)).convert('RGB').save("imgs/img_f.png")
-                # mask_x_ray_f = 4 * mask * (1 - mask)
-                # Image.fromarray(np.uint8(mask*255)).convert('RGB').save("imgs/mask.png")
-                # Image.fromarray(np.uint8(mask_x_ray_f*255)).convert('RGB').save("imgs/mask_x_ray_f.png")
                 # # resize操作
                 img_f = cv2.resize(
                     img_f, self.image_size, interpolation=cv2.INTER_LINEAR).astype('float32')/255
@@ -269,27 +205,35 @@ class SBI_Dataset(Dataset):
                 #     for j in range(map_shape):
                 #         ssim_patch[i, j] = (
                 #             ssim_map[16*i:16*(i+1), 16*j:16*(j+1)]).mean()
-
-                mask_f = cv2.resize(
-                    mask, (map_shape, map_shape), interpolation=cv2.INTER_AREA).astype('float32')
                 
+                mask_f = cv2.resize(mask, (map_shape, map_shape), interpolation=cv2.INTER_AREA).astype('float32')
+                '''从v4-1之后的版本,都是直接从整脸Mask经过AREA缩放后再计算得到的xray'''
                 mask_r = np.ones((196, 196),dtype='float32')
+                # #这里是x ray的相关性
+                # LTS 版本 边界二值化
+                # 非二值化
+                # mask_x_ray_f = 4 * mask_f * (1 - mask_f)
+                # 二值化
+                mask_x_ray_f = np.round(4 * mask_f * (1 - mask_f))
+                # mask_f = np.round(mask_f)
+                #
                 mask_f = self.Consistency2D(mask_f)  # ssim_patch，mask_f
-
+                # mask_x_ray_f = self.Consistency2D(mask_x_ray_f)
+                mask_x_ray_f = mask_x_ray_f.reshape(map_shape*map_shape)
+                mask_x_ray_r = np.zeros(map_shape*map_shape) # 这里篡改图为全0
                 flag = False
             except Exception as e:
                 print(e)
-                # break
                 # print(idx)
-                traceback.print_exc()
+                # traceback.print_exc()
                 idx = torch.randint(low=0, high=len(self), size=(1,)).item()
 
-        return img_f, img_r, mask_f, mask_r
+        return img_f, img_r, mask_f, mask_r, mask_x_ray_f, mask_x_ray_r
 
     def Consistency2D(self, mask):
-        real_mask = mask.reshape(1, -1)
-        consis_map = [np.squeeze(1 - abs(m - real_mask))
-                      for m in real_mask[0,:]]
+        real_mask = mask.reshape(1,-1)
+        consis_map = [np.squeeze(1 - abs(real_mask[0,i] - real_mask))
+                      for i in range(real_mask.shape[1])]
         return np.array(consis_map)
 
     def get_source_transforms(self):
@@ -382,12 +326,11 @@ class SBI_Dataset(Dataset):
             if exist_bi:
                 logging.disable(logging.FATAL)
                 mask = random_get_hull(landmark, img)[:, :, 0]
-                random_get_hull_debug(landmark, img)
                 logging.disable(logging.NOTSET)
             else:
                 mask = np.zeros_like(img[:, :, 0])
                 cv2.fillConvexPoly(mask, cv2.convexHull(landmark), 1.)
-            Image.fromarray(np.uint8(img)).convert('RGB').save("imgs/target.png")
+
             source = img.copy()
             # ##随机对源或目标进行变换
             if np.random.rand() < 0.5:
@@ -398,7 +341,6 @@ class SBI_Dataset(Dataset):
 
             if True:  # SBI原始方法
                 source, mask = self.randaffine(source, mask)
-                # Image.fromarray(np.uint8(mask*255)).convert('RGB').save("imgs/affine_mask.png")
                 mask_bi = mask.copy()
                 mask_bi = mask_bi.reshape(mask_bi.shape+(1,))
                 img_blended, mask = B.dynamic_blend(source, img, mask)
@@ -502,13 +444,15 @@ class SBI_Dataset(Dataset):
         return img, mask, landmark_new, bbox_new
 
     def collate_fn(self, batch):
-        img_f, img_r, mask_f, mask_r = zip(*batch)
+        img_f, img_r, mask_f, mask_r, mask_x_ray_f, mask_x_ray_r = zip(*batch)
         data = {}
         data['img'] = torch.cat(
             [torch.tensor(img_r).float(), torch.tensor(img_f).float()], 0)
         data['label'] = torch.tensor([0]*len(img_r)+[1]*len(img_f))
         data['map'] = torch.cat(
             [torch.tensor(mask_r).float(), torch.tensor(mask_f).float()], 0)
+        data['map_x_ray'] = torch.cat(
+            [torch.tensor(mask_x_ray_r).float(), torch.tensor(mask_x_ray_f).float()], 0)
         return data
 
     def worker_init_fn(self, worker_id):
@@ -535,9 +479,9 @@ if __name__ == '__main__':
     from funcs import IoUfrom2bboxes, crop_face, RandomDownScale
     from tqdm import tqdm
     if exist_bi:
-        from library.vit_gen_pcl_lts import random_get_hull, BIOnlineGeneration, random_get_hull_debug
+        from library.vit_gen_pcl_lts import random_get_hull, BIOnlineGeneration
         from library.oragn_mask import get_five_key, mask_patch
-    seed = 9
+    seed = 42
     random.seed(seed)
     torch.manual_seed(seed)
     np.random.seed(seed)
@@ -546,7 +490,7 @@ if __name__ == '__main__':
     torch.backends.cudnn.benchmark = False
     # image_dataset = SBI_Dataset(phase='test', image_size=256)
     # batch_size = 64
-    image_dataset = SBI_Dataset(phase='test', image_size=224, n_frames=2)
+    image_dataset = SBI_Dataset(phase='train', image_size=224, n_frames=2)
     batch_size = 1
     dataloader = torch.utils.data.DataLoader(image_dataset,
                                              batch_size=batch_size,
@@ -567,7 +511,7 @@ if __name__ == '__main__':
     print(data['label'])
     # print(data['mask'].shape)
     img = data['img']
-    map = data['map']
+    map = data['map_x_ray']
     # print(img.keys())
     img = img.view((-1, 3, 224, 224))
     map = map.view((-1, 1, 196, 196))
@@ -584,8 +528,8 @@ if __name__ == '__main__':
                      normalize=False, range=(0, 1))
     # utils.save_image(map_f, 'imgs/map_fake.png', nrow=batch_size,
     #                  normalize=False, range=(0, 1))
-    # map_f_cpu = convert_consis(torch.squeeze(map_f).cpu().data.numpy())
-    # Image.fromarray(np.uint8(map_f_cpu*255)).save('imgs/consis_img.png')
+    map_f_cpu = convert_consis(torch.squeeze(map_f).cpu().data.numpy())
+    Image.fromarray(np.uint8(map_f_cpu*255)).save('imgs/consis_img.png')
     if False:
         mask_0 = data['mask']
         for im in range(2):
@@ -694,5 +638,5 @@ else:
     from .initialize import *
     from .funcs import IoUfrom2bboxes, crop_face, RandomDownScale
     if exist_bi:
-        from utils.library.vit_gen_pcl import random_get_hull, BIOnlineGeneration
+        from utils.library.vit_gen_pcl_lts import random_get_hull, BIOnlineGeneration
         from utils.library.oragn_mask import get_five_key, mask_patch

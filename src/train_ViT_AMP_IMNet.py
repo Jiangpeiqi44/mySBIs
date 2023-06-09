@@ -15,7 +15,8 @@ from utils.logs import log
 from utils.funcs import load_json
 from datetime import datetime
 from tqdm import tqdm
-from vit_custom_model import Vit_hDRMLPv3_ImageNet as Net
+# from vit_custom_model import Vit_hDRMLPv3_ImageNet as Net
+from pcc_vit_dev import ViT_ImageNet as Net
 from torch.cuda.amp import autocast as autocast, GradScaler
 import math
 import torchvision.transforms as transforms
@@ -89,8 +90,8 @@ def main(args):
         transforms.Normalize(mean=[0.485, 0.456, 0.406],
                     	     std=[0.229, 0.224, 0.225])
     ])
-    train_dataset = torchvision.datasets.ImageFolder(root='imagenet100_train/',transform=data_transform)
-    val_dataset = torchvision.datasets.ImageFolder(root='imagenet100_val/',transform=data_transform)
+    train_dataset = torchvision.datasets.ImageFolder(root='IMN/imagenet100_train/',transform=data_transform)
+    val_dataset = torchvision.datasets.ImageFolder(root='IMN/imagenet100_val/',transform=data_transform)
 
     train_loader = torch.utils.data.DataLoader(train_dataset,
                                                batch_size=batch_size,
@@ -136,7 +137,7 @@ def main(args):
     pg = [p for p in model.parameters() if p.requires_grad]
     # optimizer = torch.optim.SGD(pg, lr=1e-3, momentum=0.9, weight_decay=5E-5)
     optimizer = torch.optim.AdamW(
-        pg, lr=1e-3, betas=(0.9, 0.999), weight_decay=0.3)  # 6e-5  3e-5  2e-5 wd默认1e-2
+        pg, lr=1e-3, betas=(0.9, 0.999), weight_decay=0.1)  # 6e-5  3e-5  2e-5 wd默认1e-2
    
     iter_loss = []
     train_losses = []
@@ -177,7 +178,6 @@ def main(args):
     n_weight_loss = 2
 
     for epoch in range(n_epoch):
-        seed_torch(seed + epoch)
         train_loss = 0.
         train_acc = 0.
         model.train(mode=True)
@@ -215,7 +215,6 @@ def main(args):
         val_acc = 0.
         output_dict = []
         target_dict = []
-        seed_torch(seed)
         for step, data in enumerate(tqdm(val_loader)):
             img = data[0].to(device, non_blocking=True).float()
             target = data[1].to(device, non_blocking=True).long()

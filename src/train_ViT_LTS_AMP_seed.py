@@ -8,8 +8,7 @@ import warnings
 # from utils.ibi_wavelet import SBI_Dataset
 # from utils.bi_wavelet import SBI_Dataset
 # from utils.sbi_default import SBI_Dataset
-from utils.MixBI_UIA import SBI_Dataset
-from utils.MixBI_UIA_FF_Fake import FF_Dataset
+from utils.MixBI_LTS import SBI_Dataset
 from utils.scheduler import LinearDecayLR
 from sklearn.metrics import confusion_matrix, roc_auc_score
 import argparse
@@ -17,7 +16,8 @@ from utils.logs import log
 from utils.funcs import load_json
 from datetime import datetime
 from tqdm import tqdm
-from vit_consis_model import Vit_hDRMLPv2_consisv5 as Net
+# from vit_consis_model import Vit_hDRMLPv2_consisv5 as Net
+from pcc_vit_dev import PCC_ViT_dev2 as Net
 from torch.cuda.amp import autocast as autocast, GradScaler
 import math
 from prefetch_generator import BackgroundGenerator
@@ -31,6 +31,11 @@ class DataLoaderX(torch.utils.data.DataLoader):
 def compute_accuray(pred, true):
     pred_idx = pred.argmax(dim=1).cpu().data.numpy()
     tmp = pred_idx == true.cpu().numpy()
+    return sum(tmp)/len(pred_idx)
+
+def compute_accuray_sigmoid(pred, true):
+    pred_idx = pred.cpu().data.numpy()
+    tmp = np.round(pred_idx) == true.cpu().numpy()
     return sum(tmp)/len(pred_idx)
 
 def seed_torch(seed):
@@ -93,40 +98,26 @@ def main(args):
         phase='train', image_size=image_size, n_frames=8)
     val_dataset = SBI_Dataset(phase='val', image_size=image_size, n_frames=8)
 
-    ff_fake_dataset = FF_Dataset(phase='train', image_size=image_size, n_frames=8)
-    
-    
-    train_loader = torch.utils.data.DataLoader(train_dataset,
-                               batch_size=batch_size//4,
+    train_loader = DataLoaderX(train_dataset,
+                               batch_size=batch_size//2,
                                shuffle=True,
                                collate_fn=train_dataset.collate_fn,
-                               num_workers=12,
+                               num_workers=13,
                                pin_memory=True,
                                drop_last=True,
                                prefetch_factor=3
                                )
     # ,worker_init_fn=train_dataset.worker_init_fn
-    val_loader = torch.utils.data.DataLoader(val_dataset,
+    val_loader = DataLoaderX(val_dataset,
                              batch_size=batch_size//2,
                              shuffle=False,
                              collate_fn=val_dataset.collate_fn,
-                             num_workers=12,
+                             num_workers=13,
                              pin_memory=True,
                              prefetch_factor=3
                              )
     # ,worker_init_fn=val_dataset.worker_init_fn
-    
-    train_loader_fake = torch.utils.data.DataLoader(ff_fake_dataset,
-                               batch_size=batch_size//2,
-                               shuffle=True,
-                               collate_fn=ff_fake_dataset.collate_fn,
-                               num_workers=8,
-                               pin_memory=True,
-                               drop_last=True,
-                               prefetch_factor=3
-                               )
-   
-    
+
     model = Net()
 
     model = model.to('cuda')
@@ -161,7 +152,7 @@ def main(args):
                                            T_max=n_epoch,
                                            eta_min=1.0e-8,
                                            last_epoch=-1,
-                                           warmup_steps=10,
+                                           warmup_steps=3,
                                            warmup_start_lr=1.0e-7)
     last_loss = 99999
     scaler = GradScaler()
@@ -174,7 +165,7 @@ def main(args):
     os.mkdir(save_path+'logs/')
     logger = log(path=save_path+"logs/", file="losses.logs")
 
-    criterion = nn.CrossEntropyLoss()
+    # criterion = nn.CrossEntropyLoss()
     criterionMap = nn.BCEWithLogitsLoss() #nn.BCELoss()
     lbda_main = 2
     lbda_edge = 2
@@ -195,25 +186,15 @@ def main(args):
         train_loss = 0.
         train_acc = 0.
         model.train(mode=True)
-        dataloader_iterator1 = iter(train_loader)
-    
-        for i, data2 in enumerate(tqdm(train_loader_fake)):
-
-            try:
-                data1 = next(dataloader_iterator1)
-            except StopIteration:
-                dataloader_iterator1 = iter(train_loader)
-                data1 = next(dataloader_iterator1)
-
-        # for step, data in enumerate(tqdm(train_loader)):
-            img = torch.cat([data1['img'],data2['img']], 0).to(device, non_blocking=True).float()
-            target = torch.cat([data1['label'],data2['label']], 0).to(device, non_blocking=True).long()
-            target_map = torch.cat([data1['map'],data2['map']], 0).to(device, non_blocking=True).float()
-            target_map_x_ray = torch.cat([data1['map_x_ray'],data2['map_x_ray']],0).to(device, non_blocking=True).float()
+        for step, data in enumerate(tqdm(train_loader)):
+            img = data['img'].to(device, non_blocking=True).float()
+            target = data['label'].to(device, non_blocking=True).float()
+            target_map = data['map'].to(device, non_blocking=True).float()
+            target_map_x_ray = data['map_x_ray'].to(device, non_blocking=True).float()
             optimizer.zero_grad()
             with autocast():
                 output, map_mid, map_last= model(img) # 中间层map 最后一层map
-                loss_cls = criterion(output, target)
+                loss_cls = criterionMap(output, target)
                 loss_map = criterionMap(map_mid, target_map)
                 loss_map_x_ray = criterionMap(map_last, target_map_x_ray)
                 loss = loss_cls + lbda_main*loss_map + lbda_edge*loss_map_x_ray
@@ -225,18 +206,19 @@ def main(args):
             loss_value = loss.item()
             iter_loss.append(loss_value)
             train_loss += loss_value
-            acc = compute_accuray(F.log_softmax(output, dim=1), target)
+            # acc = compute_accuray(F.log_softmax(output, dim=1), target)
+            acc = compute_accuray_sigmoid(output.sigmoid(), target)
             train_acc += acc
         lr_scheduler.step()
         print('lr: ', lr_scheduler.get_last_lr())
-        train_losses.append(train_loss/(len(train_loader)+len(train_loader_fake)))
-        train_accs.append(train_acc/(len(train_loader)+len(train_loader_fake)))
+        train_losses.append(train_loss/len(train_loader))
+        train_accs.append(train_acc/len(train_loader))
 
         log_text = "Epoch {}/{} | train loss: {:.4f}, train acc: {:.4f}, ".format(
             epoch+1,
             n_epoch,
-            train_loss/(len(train_loader)+len(train_loader_fake)),
-            train_acc/(len(train_loader)+len(train_loader_fake)),
+            train_loss/len(train_loader),
+            train_acc/len(train_loader),
         )
 
         model.train(mode=False)
@@ -244,19 +226,22 @@ def main(args):
         val_acc = 0.
         output_dict = []
         target_dict = []
-        seed_torch(seed + epoch//seed_interval)
+        # seed_torch(seed + epoch//seed_interval)
+        seed_torch(seed)   # val fix seed
         for step, data in enumerate(tqdm(val_loader)):
             img = data['img'].to(device, non_blocking=True).float()
-            target = data['label'].to(device, non_blocking=True).long()
+            target = data['label'].to(device, non_blocking=True).float()
             with torch.no_grad():
                 output = model.test_time(img)
-                loss = criterion(output, target)
+                loss = criterionMap(output, target)
             loss_value = loss.item()
             iter_loss.append(loss_value)
             val_loss += loss_value
-            acc = compute_accuray(F.log_softmax(output, dim=1), target)
+            # acc = compute_accuray(F.log_softmax(output, dim=1), target)
+            acc = compute_accuray_sigmoid(output.sigmoid(), target)
             val_acc += acc
-            output_dict += output.softmax(1)[:, 1].cpu().data.numpy().tolist()
+            # output_dict += output.softmax(1)[:, 1].cpu().data.numpy().tolist()
+            output_dict += output.sigmoid().cpu().data.numpy().tolist()
             target_dict += target.cpu().data.numpy().tolist()
         val_losses.append(val_loss/len(val_loader))
         val_accs.append(val_acc/len(val_loader))
